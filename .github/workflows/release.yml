@@ -1,0 +1,37 @@
+name: Release macOS App
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish GitHub Release
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: meta
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & Package Release Artifacts
+        run: |
+          chmod +x scripts/build-release.sh
+          ./scripts/build-release.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "ChronoStream ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: |
+            dist/ChronoStream-${{ steps.meta.outputs.version }}-arm64.dmg
+            dist/ChronoStream-${{ steps.meta.outputs.version }}-arm64.zip
+            dist/SHA256SUMS.txt
