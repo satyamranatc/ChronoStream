@@ -299,13 +299,14 @@ public final class LocalShareSession {
             )
         }
 
+        let startOffset = UInt64(start)
         connection.send(content: Data(hdr.utf8), completion: .contentProcessed { err in
             if err != nil || headOnly || length == 0 {
                 try? fh.close()
                 connection.cancel()
                 return
             }
-            try? fh.seek(toOffset: UInt64(start))
+            try? fh.seek(toOffset: startOffset)
             self.pumpFileChunks(connection: connection, fh: fh, remaining: length, sentSoFar: 0, fileName: item.name, clientIP: clientIP, transferID: transferID)
         })
     }
@@ -384,7 +385,8 @@ public final class LocalShareSession {
             if isUp && !isLoopback, let addr = current.pointee.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) {
                 var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 if getnameinfo(addr, socklen_t(addr.pointee.sa_len), &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST) == 0 {
-                    let ip = String(cString: hostname)
+                    let utf8Bytes = hostname.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }
+                    let ip = String(decoding: utf8Bytes, as: UTF8.self)
                     let name = String(cString: current.pointee.ifa_name)
                     if name == "en0" { return ip }
                     if fallback == nil { fallback = ip }

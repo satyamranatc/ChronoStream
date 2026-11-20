@@ -105,7 +105,7 @@ public actor FFmpegBridge {
 
     /// Non-isolated, bounded-concurrency, cancellation-safe thumbnail extractor so scrolling 500+ DVR files never stalls.
     public nonisolated func extractThumbnail(for url: URL, at seconds: Double, width: Int = 320) async -> NSImage? {
-        guard let ffmpeg = await self.ffmpegPath else { return nil }
+        guard let ffmpeg = self.ffmpegPath else { return nil }
         if Task.isCancelled { return nil }
 
         return await withCheckedContinuation { continuation in

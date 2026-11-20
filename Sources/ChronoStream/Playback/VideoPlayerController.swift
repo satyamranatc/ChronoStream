@@ -1,5 +1,5 @@
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import Observation
 
@@ -69,6 +69,7 @@ private final class ScrubPreviewEngine: @unchecked Sendable {
 
     // Protected by decodeQueue
     private var generator: AVAssetImageGenerator?
+    private var prewarmGenerator: AVAssetImageGenerator?
     private var generation: Int = 0
     private var pendingTime: Double?
     private var pendingCallback: (@Sendable (NSImage) -> Void)?
@@ -87,6 +88,8 @@ private final class ScrubPreviewEngine: @unchecked Sendable {
             self.generation += 1
             let gen = self.generation
             self.generator?.cancelAllCGImageGeneration()
+            self.prewarmGenerator?.cancelAllCGImageGeneration()
+            self.prewarmGenerator = nil
             self.pendingTime = nil
             self.pendingCallback = nil
             self.isDecodingLive = false
@@ -116,7 +119,9 @@ private final class ScrubPreviewEngine: @unchecked Sendable {
             guard let self else { return }
             self.generation += 1
             self.generator?.cancelAllCGImageGeneration()
+            self.prewarmGenerator?.cancelAllCGImageGeneration()
             self.generator = nil
+            self.prewarmGenerator = nil
             self.pendingTime = nil
             self.pendingCallback = nil
             self.isDecodingLive = false
@@ -216,6 +221,7 @@ private final class ScrubPreviewEngine: @unchecked Sendable {
         prewarmGen.maximumSize = CGSize(width: 240, height: 135)
         prewarmGen.requestedTimeToleranceBefore = imgGen.requestedTimeToleranceBefore
         prewarmGen.requestedTimeToleranceAfter = imgGen.requestedTimeToleranceAfter
+        self.prewarmGenerator = prewarmGen
 
         prewarmGen.generateCGImagesAsynchronously(forTimes: times) { [weak self] requestedTime, cg, _, result, _ in
             guard let self else { return }
@@ -225,7 +231,7 @@ private final class ScrubPreviewEngine: @unchecked Sendable {
 
             self.decodeQueue.async {
                 guard gen == self.generation else {
-                    prewarmGen.cancelAllCGImageGeneration()
+                    self.prewarmGenerator?.cancelAllCGImageGeneration()
                     return
                 }
                 self.cacheLock.lock()
