@@ -288,6 +288,14 @@ public struct VideoStageView: View {
                                 .frame(width: 72)
                                 .controlSize(.small)
                             }
+
+                            // Native AirPlay / Cast picker
+                            AirPlayRoutePickerButton(
+                                player: controller.player,
+                                tintColor: .labelColor
+                            )
+                            .frame(width: 24, height: 22)
+                            .help("AirPlay / Cast to Apple TV, Smart TV, or Speaker")
                         }
                         .foregroundStyle(.primary)
                     }

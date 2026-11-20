@@ -275,6 +275,7 @@ public final class VideoPlayerController {
 
     public init() {
         player.automaticallyWaitsToMinimizeStalling = true
+        player.allowsExternalPlayback = true
     }
 
     public func bind(store: LibraryStore) {

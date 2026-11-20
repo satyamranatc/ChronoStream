@@ -113,6 +113,10 @@ public struct AudioStageView: View {
                     .fixedSize()
                     .help("Sleep Timer")
 
+                    AirPlayRoutePickerButton(player: controller.player)
+                        .frame(width: 24, height: 22)
+                        .help("AirPlay / Cast Audio to Speaker or TV")
+
                     Button(action: onShare) {
                         Image(systemName: "square.and.arrow.up")
                             .foregroundStyle(.secondary)
