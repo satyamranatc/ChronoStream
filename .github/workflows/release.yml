@@ -27,7 +27,7 @@ jobs:
           ./scripts/build-release.sh "${{ steps.meta.outputs.version }}"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "ChronoStream ${{ github.ref_name }}"
           generate_release_notes: true
