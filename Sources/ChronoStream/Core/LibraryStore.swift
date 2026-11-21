@@ -87,7 +87,7 @@ public final class LibraryStore {
         case .collection(let id):
             let ids = Set(collections.first(where: { $0.id == id })?.itemIDs ?? [])
             list = items.filter { ids.contains($0.id) }
-        case .photoStudio, .videoStudio, .documentStudio, .dashboard:
+        case .photoStudio, .videoStudio, .documentStudio, .dashboard, .wifiShare:
             list = []
         }
 

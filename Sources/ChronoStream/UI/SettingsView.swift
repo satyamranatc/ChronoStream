@@ -7,6 +7,10 @@ public struct SettingsView: View {
     @State private var ffmpegInstalled: Bool = false
     @State private var isDefaultVideoPlayer: Bool = false
     @State private var defaultStatusNote: String?
+    @AppStorage("uiTextScale") private var uiTextScale: String = "comfortable"
+    @AppStorage("appThemeMode") private var appThemeMode: String = "light"
+    @AppStorage("uiClickSoundEnabled") private var uiClickSoundEnabled: Bool = true
+    @AppStorage("uiClickSoundName") private var uiClickSoundName: String = "Tink"
 
     public init(store: LibraryStore) {
         self.store = store
@@ -52,6 +56,36 @@ public struct SettingsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isDefaultVideoPlayer)
+                }
+            }
+
+            Section("Appearance & Feedback") {
+                Picker("Theme", selection: $appThemeMode) {
+                    Text("Pure Light").tag("light")
+                    Text("Dark").tag("dark")
+                    Text("System").tag("system")
+                }
+                .pickerStyle(.segmented)
+
+                Picker("Interface Text Size", selection: $uiTextScale) {
+                    Text("Compact (Default macOS)").tag("compact")
+                    Text("Comfortable (+15%)").tag("comfortable")
+                    Text("Large (+25%)").tag("large")
+                }
+                .pickerStyle(.segmented)
+
+                Toggle("Subtle macOS Click Sound", isOn: $uiClickSoundEnabled)
+
+                if uiClickSoundEnabled {
+                    Picker("Click Sound", selection: $uiClickSoundName) {
+                        Text("Tink (Default)").tag("Tink")
+                        Text("Pop").tag("Pop")
+                        Text("Morse").tag("Morse")
+                        Text("Frog").tag("Frog")
+                    }
+                    .onChange(of: uiClickSoundName) { _, _ in
+                        UISoundFeedback.shared.playClick()
+                    }
                 }
             }
 

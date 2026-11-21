@@ -93,9 +93,9 @@ public struct ShareSheetView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Scan with iPhone Camera")
+                            Text("Scan with Android or iPhone Camera")
                                 .font(.subheadline.weight(.semibold))
-                            Text("Opens directly in Safari — no iPhone app required.")
+                            Text("Opens directly in Chrome or Safari — no phone app required.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 

@@ -57,6 +57,8 @@ public struct VideoStageView: View {
     @State private var osdSymbol: String?
     @State private var osdHideTask: Task<Void, Never>?
     @State private var showShortcutsHelp = false
+    @State private var showDisplayPopover = false
+    private let displayManager = DisplayManager.shared
 
     private let speeds: [Float] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0]
     private let zoomWindows: [Double] = [0, 3600, 900, 120]
@@ -179,6 +181,25 @@ public struct VideoStageView: View {
                         .buttonStyle(.bordered)
                         .tint(.white.opacity(0.2))
                         .foregroundStyle(.white)
+
+                        if displayManager.hasExternalDisplay {
+                            Button {
+                                if displayManager.isExternalCinemaActive {
+                                    displayManager.stopExternalCinema()
+                                    flashOSD("External Cinema Off", symbol: "tv.slash")
+                                } else {
+                                    displayManager.startExternalCinema(player: controller.player)
+                                    flashOSD("Playing on HDMI Display", symbol: "tv.fill")
+                                }
+                            } label: {
+                                Label(displayManager.isExternalCinemaActive ? "HDMI On" : "HDMI Cinema", systemImage: "tv")
+                                    .font(.caption.weight(.medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(displayManager.isExternalCinemaActive ? .teal : .white.opacity(0.2))
+                            .foregroundStyle(.white)
+                            .help("Send video full-screen to connected HDMI display")
+                        }
 
                         Button {
                             showShortcutsHelp.toggle()
@@ -323,6 +344,7 @@ public struct VideoStageView: View {
         .onDisappear {
             removeKeyMonitor()
             osdHideTask?.cancel()
+            displayManager.stopExternalCinema()
             controller.stop()
         }
     }

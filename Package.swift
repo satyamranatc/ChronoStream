@@ -23,6 +23,7 @@ let package = Package(
                 .linkedFramework("PDFKit"),
                 .linkedFramework("QuickLookThumbnailing"),
                 .linkedFramework("CryptoKit"),
+                .linkedFramework("IOKit"),
                 .linkedFramework("UniformTypeIdentifiers")
             ]
         ),

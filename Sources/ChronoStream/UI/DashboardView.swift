@@ -1,7 +1,14 @@
 import AppKit
+import Charts
 import Foundation
 import Observation
 import SwiftUI
+
+private enum DashboardTab: String, CaseIterable, Identifiable {
+    case stats = "Stats & Activity"
+    case explore = "Explore Today"
+    var id: String { rawValue }
+}
 
 public struct DashboardWeather: Sendable {
     public let temperatureC: Double
@@ -180,6 +187,25 @@ public struct DashboardView: View {
     @Bindable var store: LibraryStore
     @State private var feed = DashboardFeedModel()
     @State private var appeared = false
+    @State private var activeTab: DashboardTab = .stats
+    @Environment(\.colorScheme) private var colorScheme
+    private let usage = UsageStatsStore.shared
+
+    private var canvasBackground: Color {
+        colorScheme == .light ? Color(red: 0.962, green: 0.970, blue: 0.980) : Color(nsColor: .windowBackgroundColor)
+    }
+
+    private var cardSurface: Color {
+        colorScheme == .light ? Color.white : Color(nsColor: .controlBackgroundColor)
+    }
+
+    private var cardBorder: Color {
+        colorScheme == .light ? Color.black.opacity(0.06) : Color.primary.opacity(0.08)
+    }
+
+    private var cardShadow: Color {
+        colorScheme == .light ? Color.black.opacity(0.045) : Color.clear
+    }
 
     public init(store: LibraryStore) {
         self.store = store
@@ -211,20 +237,48 @@ public struct DashboardView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 20) {
                 heroBanner
-                statsGrid
-                storageBreakdownCard
 
-                if !continueItems.isEmpty {
-                    continueWatchingStrip
+                // Clean Apple-style 2-Tab Switcher: Stats & Activity vs Explore Today
+                HStack {
+                    Picker("", selection: $activeTab) {
+                        ForEach(DashboardTab.allCases) { tab in
+                            Text(tab.rawValue).tag(tab)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 280)
+
+                    Spacer()
+
+                    if activeTab == .stats {
+                        Text("Recorded locally · 100% private")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        Text("Live Feed")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
 
-                liveInternetSection
+                if activeTab == .stats {
+                    watchTimeKPIRow
+                    activityChartsRow
+                    statsGrid
+                    storageBreakdownCard
+
+                    if !continueItems.isEmpty {
+                        continueWatchingStrip
+                    }
+                } else {
+                    liveInternetSection
+                }
             }
             .padding(24)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(canvasBackground)
         .navigationTitle("Dashboard")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -251,14 +305,15 @@ public struct DashboardView: View {
     private var heroBanner: some View {
         ZStack(alignment: .bottomLeading) {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(cardSurface)
+                .shadow(color: cardShadow, radius: 14, y: 5)
                 .overlay(
                     AmbientWaveCanvas()
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                        .strokeBorder(cardBorder, lineWidth: 1)
                 )
 
             HStack(alignment: .top) {
@@ -278,10 +333,10 @@ public struct DashboardView: View {
                     }
 
                     Text(greeting)
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
 
                     Text("\(store.items.count) media items indexed across \(store.folders.count) authorized folder\(store.folders.count == 1 ? "" : "s") · \(MediaFormatting.byteString(totalBytes)) total")
-                        .font(.callout)
+                        .font(.system(size: 14))
                         .foregroundStyle(.secondary)
 
                     HStack(spacing: 10) {
@@ -333,6 +388,203 @@ public struct DashboardView: View {
         .offset(y: appeared ? 0 : 8)
     }
 
+    // MARK: - Usage & Watch-Time KPIs + Native Apple Charts
+
+    private var watchTimeKPIRow: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 14)], spacing: 14) {
+            usageKPICard(
+                title: "Time in ChronoStream",
+                todayValue: UsageStatsStore.formatHoursMinutes(usage.todayRecord.appSeconds),
+                weekValue: UsageStatsStore.formatHoursMinutes(usage.weekAppSeconds),
+                allTimeValue: UsageStatsStore.formatHoursMinutes(usage.allTimeAppSeconds),
+                symbol: "clock.fill",
+                tint: .teal
+            )
+            usageKPICard(
+                title: "Video Watched",
+                todayValue: UsageStatsStore.formatHoursMinutes(usage.todayRecord.videoWatchedSeconds),
+                weekValue: UsageStatsStore.formatHoursMinutes(usage.weekVideoSeconds),
+                allTimeValue: UsageStatsStore.formatHoursMinutes(usage.allTimeVideoSeconds),
+                symbol: "play.rectangle.fill",
+                tint: .blue
+            )
+            usageKPICard(
+                title: "Audio Listened",
+                todayValue: UsageStatsStore.formatHoursMinutes(usage.todayRecord.audioListenedSeconds),
+                weekValue: UsageStatsStore.formatHoursMinutes(usage.weekAudioSeconds),
+                allTimeValue: UsageStatsStore.formatHoursMinutes(usage.allTimeAudioSeconds),
+                symbol: "headphones",
+                tint: .indigo
+            )
+        }
+    }
+
+    private func usageKPICard(title: String, todayValue: String, weekValue: String, allTimeValue: String, symbol: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: symbol)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+                    .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+                Spacer()
+                Text("Today")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.05), in: Capsule())
+            }
+
+            Text(todayValue)
+                .font(.title.weight(.bold).monospacedDigit())
+                .contentTransition(.numericText())
+
+            HStack {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("7d: \(weekValue) · All: \(allTimeValue)")
+                    .font(.system(size: 11.5).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(14)
+        .background(cardSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
+        .shadow(color: cardShadow, radius: 10, y: 3)
+    }
+
+    private var activityChartsRow: some View {
+        let points = usage.last7DaysPoints
+        let videoMins = usage.weekVideoSeconds / 60.0
+        let audioMins = usage.weekAudioSeconds / 60.0
+        let browseMins = max(0, (usage.weekAppSeconds - usage.weekVideoSeconds - usage.weekAudioSeconds) / 60.0)
+        let totalWeekMins = max(0.01, videoMins + audioMins + browseMins)
+
+        let slices: [(label: String, value: Double, color: Color)] = [
+            ("Video Watched", videoMins, .blue),
+            ("Audio Listened", audioMins, .indigo),
+            ("Library & Studio", browseMins, .teal)
+        ]
+
+        return HStack(alignment: .top, spacing: 14) {
+            // Graph 1: 7-Day Activity Bar Chart (Apple Screen Time style)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("7-Day Activity")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Minutes spent in app vs. video watched")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    HStack(spacing: 12) {
+                        legendDot("In App", color: .teal)
+                        legendDot("Watched", color: .blue)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+
+                Chart(points) { pt in
+                    BarMark(
+                        x: .value("Day", pt.dayLabel),
+                        y: .value("Minutes", max(0.2, pt.appMinutes))
+                    )
+                    .foregroundStyle(Color.teal.opacity(0.32))
+                    .cornerRadius(6)
+
+                    BarMark(
+                        x: .value("Day", pt.dayLabel),
+                        y: .value("Minutes", pt.videoMinutes)
+                    )
+                    .foregroundStyle(Color.blue.gradient)
+                    .cornerRadius(6)
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading) { val in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                            .foregroundStyle(Color.primary.opacity(0.1))
+                        AxisValueLabel {
+                            if let m = val.as(Double.self) {
+                                Text("\(Int(m))m")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks { _ in
+                        AxisValueLabel()
+                            .font(.caption2)
+                    }
+                }
+                .frame(height: 175)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(cardSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
+            .shadow(color: cardShadow, radius: 10, y: 3)
+
+            // Graph 2: Weekly Time Breakdown Donut Chart
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Time Breakdown")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Last 7 days")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                ZStack {
+                    Chart(slices, id: \.label) { s in
+                        SectorMark(
+                            angle: .value("Minutes", max(0.001, s.value)),
+                            innerRadius: .ratio(0.64),
+                            angularInset: 2
+                        )
+                        .cornerRadius(4)
+                        .foregroundStyle(s.color.gradient)
+                    }
+                    .frame(height: 140)
+
+                    VStack(spacing: 1) {
+                        Text(UsageStatsStore.formatHoursMinutes(usage.weekAppSeconds))
+                            .font(.callout.weight(.bold).monospacedDigit())
+                        Text("7d total")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(spacing: 5) {
+                    ForEach(slices, id: \.label) { s in
+                        HStack(spacing: 6) {
+                            Circle().fill(s.color).frame(width: 7, height: 7)
+                            Text(s.label)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(Int(((s.value / totalWeekMins) * 100).rounded()))%")
+                                .font(.caption2.monospacedDigit().weight(.medium))
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .frame(width: 245, alignment: .leading)
+            .background(cardSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
+            .shadow(color: cardShadow, radius: 10, y: 3)
+        }
+    }
+
     // MARK: - Live Library Stats Grid
 
     private var statsGrid: some View {
@@ -373,20 +625,21 @@ public struct DashboardView: View {
 
                 HStack {
                     Text(title)
-                        .font(.caption.weight(.medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer()
                     Text(MediaFormatting.byteString(size))
-                        .font(.caption2.monospacedDigit())
+                        .font(.system(size: 11.5).monospacedDigit())
                         .foregroundStyle(.tertiary)
                 }
             }
             .padding(14)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(cardSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+                    .strokeBorder(cardBorder, lineWidth: 1)
             )
+            .shadow(color: cardShadow, radius: 10, y: 3)
         }
         .buttonStyle(.plain)
     }
@@ -552,8 +805,9 @@ public struct DashboardView: View {
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                .background(cardSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
+                .shadow(color: cardShadow, radius: 10, y: 3)
 
                 // Right Column: Daily Reflection + On This Day
                 VStack(spacing: 14) {
@@ -588,8 +842,9 @@ public struct DashboardView: View {
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                    .background(cardSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
+                    .shadow(color: cardShadow, radius: 10, y: 3)
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("On This Day in History")
@@ -602,8 +857,9 @@ public struct DashboardView: View {
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                    .background(cardSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
+                    .shadow(color: cardShadow, radius: 10, y: 3)
                 }
                 .frame(maxWidth: .infinity)
             }

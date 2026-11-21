@@ -508,7 +508,11 @@ public final class DocumentEditorController {
             add("Summarize the mental model in two clear sentences.\n", size: 15)
         default:
             documentTitle = "Untitled Document"
-            add("", size: 15)
+            tv.typingAttributes = [
+                .font: NSFont.systemFont(ofSize: 15, weight: .regular),
+                .foregroundColor: NSColor(calibratedRed: 0.12, green: 0.15, blue: 0.18, alpha: 1),
+                .paragraphStyle: bodyPara
+            ]
         }
 
         storage.setAttributedString(doc)
@@ -731,7 +735,7 @@ private struct RichTextPaperView: NSViewRepresentable {
 
         scroll.documentView = tv
         controller.textView = tv
-        controller.loadTemplate("Lesson Plan")
+        controller.loadTemplate("Blank")
         return scroll
     }
 

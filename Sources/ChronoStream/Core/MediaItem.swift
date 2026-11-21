@@ -200,6 +200,7 @@ public enum SidebarSelection: Hashable, Sendable {
     case photoStudio
     case videoStudio
     case documentStudio
+    case wifiShare
 }
 
 public enum SmartCollection: String, CaseIterable, Identifiable, Sendable {

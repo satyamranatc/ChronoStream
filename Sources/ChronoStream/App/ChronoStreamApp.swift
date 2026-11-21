@@ -20,6 +20,35 @@ struct ChronoStreamApp: App {
     @State private var libraryStore = LibraryStore()
     @State private var videoController = VideoPlayerController()
     @State private var audioController = AudioPlayerController()
+    @AppStorage("uiTextScale") private var uiTextScale: String = "comfortable"
+    @AppStorage("appThemeMode") private var appThemeMode: String = "light"
+
+    private var resolvedBaseFontSize: CGFloat {
+        switch uiTextScale {
+        case "compact": return 13.0
+        case "large": return 16.0
+        default: return 14.5
+        }
+    }
+
+    private var resolvedColorScheme: ColorScheme? {
+        switch appThemeMode {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
+    }
+
+    private func applyNSAppearance(_ mode: String) {
+        switch mode {
+        case "light":
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark":
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        default:
+            NSApp.appearance = nil
+        }
+    }
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -32,10 +61,15 @@ struct ChronoStreamApp: App {
                 videoController: videoController,
                 audioController: audioController
             )
+            .font(.system(size: resolvedBaseFontSize))
+            .preferredColorScheme(resolvedColorScheme)
             .frame(minWidth: 960, minHeight: 620)
             .onAppear {
+                applyNSAppearance(appThemeMode)
+                UISoundFeedback.shared.installGlobalClickMonitor()
                 videoController.bind(store: libraryStore)
                 audioController.bind(store: libraryStore)
+                UsageStatsStore.shared.startTracking(videoController: videoController, audioController: audioController)
                 appDelegate.onOpenURLs = { [weak libraryStore] urls in
                     Task { @MainActor in
                         libraryStore?.handleDroppedURLs(urls, openFirst: true)
@@ -50,6 +84,9 @@ struct ChronoStreamApp: App {
             }
             .onOpenURL { url in
                 libraryStore.handleDroppedURLs([url], openFirst: true)
+            }
+            .onChange(of: appThemeMode) { _, newMode in
+                applyNSAppearance(newMode)
             }
         }
         .windowToolbarStyle(.automatic)

@@ -66,7 +66,7 @@ public struct MainWindowView: View {
     @Bindable var videoController: VideoPlayerController
     @Bindable var audioController: AudioPlayerController
 
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var showSidebar: Bool = true
     @State private var showNewCollectionSheet = false
     @State private var newCollectionName = ""
     @State private var isDropTargeted = false
@@ -75,8 +75,12 @@ public struct MainWindowView: View {
     @State private var showShareSheet = false
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
     @AppStorage("hasAskedDefaultPlayer") private var hasAskedDefaultPlayer = false
+    @AppStorage("appThemeMode") private var appThemeMode: String = "light"
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showWelcomeSheet = false
     @State private var showDefaultBanner = false
+    @State private var showDisplayPopover = false
+    private let displayManager = DisplayManager.shared
 
     private let gridColumns = [GridItem(.adaptive(minimum: 175, maximum: 230), spacing: 16)]
 
@@ -87,9 +91,14 @@ public struct MainWindowView: View {
     }
 
     public var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-        } detail: {
+        HStack(spacing: 0) {
+            if showSidebar {
+                sidebar
+                    .frame(width: 244)
+                    .background(colorScheme == .light ? Color(red: 0.975, green: 0.980, blue: 0.988) : Color(nsColor: .controlBackgroundColor))
+                Divider()
+            }
+
             ZStack(alignment: .bottom) {
                 if store.selection == .dashboard && store.activeItem == nil {
                     DashboardView(store: store)
@@ -99,6 +108,10 @@ public struct MainWindowView: View {
                     VideoStudioView(store: store)
                 } else if store.selection == .documentStudio {
                     DocumentStudioView()
+                } else if store.selection == .wifiShare {
+                    WiFiShareHubView { receivedURL in
+                        store.handleDroppedURLs([receivedURL], openFirst: true)
+                    }
                 } else if let active = store.activeItem {
                     activeViewer(for: active)
                 } else {
@@ -110,6 +123,7 @@ public struct MainWindowView: View {
                     miniAudioBar(for: playingAudio)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(nil, value: store.selection)
             .overlay {
                 if isDropTargeted {
@@ -123,8 +137,75 @@ public struct MainWindowView: View {
             .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
                 handleDrop(providers: providers)
             }
+            .overlay(alignment: .topTrailing) {
+                if let banner = displayManager.lastEventBanner {
+                    HStack(spacing: 8) {
+                        Image(systemName: "tv.and.hifispeaker.fill")
+                            .foregroundStyle(Color.teal)
+                        Text(banner)
+                            .font(.caption.weight(.medium))
+                        Button("Manage") {
+                            showDisplayPopover = true
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.teal.opacity(0.35), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
+                    .padding(14)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
         }
-        .navigationSplitViewStyle(.balanced)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        showSidebar.toggle()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+                .help("Toggle Sidebar (⌥⌘S)")
+            }
+
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    appThemeMode = (colorScheme == .light) ? "dark" : "light"
+                } label: {
+                    Image(systemName: colorScheme == .light ? "moon.stars" : "sun.max.fill")
+                        .foregroundStyle(colorScheme == .light ? Color.secondary : Color.yellow)
+                }
+                .help(colorScheme == .light ? "Switch to Dark Theme" : "Switch to Pure White Theme")
+            }
+
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    showDisplayPopover.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: displayManager.hasExternalDisplay ? "display.2" : "laptopcomputer")
+                            .foregroundStyle(displayManager.hasExternalDisplay ? Color.teal : Color.secondary)
+                        if displayManager.hasExternalDisplay {
+                            Text("HDMI")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.teal)
+                        }
+                    }
+                }
+                .help("Displays")
+                .popover(isPresented: $showDisplayPopover, arrowEdge: .bottom) {
+                    DisplayControlPopover(
+                        displayManager: displayManager,
+                        activeVideoPlayer: store.activeItem?.kind == .video ? videoController.player : nil
+                    )
+                }
+            }
+        }
         .sheet(isPresented: $showNewCollectionSheet) {
             newCollectionDialog
         }
@@ -169,42 +250,39 @@ public struct MainWindowView: View {
     private var sidebar: some View {
         List(selection: $store.selection) {
             Section {
-                NavigationLink(value: SidebarSelection.dashboard) {
-                    Label("Dashboard", systemImage: "sparkles.rectangle.stack")
-                }
+                Label("Dashboard", systemImage: "sparkles.rectangle.stack")
+                    .tag(SidebarSelection.dashboard)
             }
 
             Section("Library") {
                 ForEach(SmartCollection.allCases) { smart in
-                    NavigationLink(value: SidebarSelection.smart(smart)) {
-                        HStack(spacing: 8) {
-                            Label(smart.rawValue, systemImage: smart.systemImage)
-                                .lineLimit(1)
-                            Spacer()
-                            let c = store.count(for: smart)
-                            if c > 0 {
-                                Text("\(c)")
-                                    .font(.caption2.monospacedDigit().weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 1.5)
-                                    .background(Color.primary.opacity(0.08), in: Capsule())
-                            }
+                    HStack(spacing: 8) {
+                        Label(smart.rawValue, systemImage: smart.systemImage)
+                            .lineLimit(1)
+                        Spacer()
+                        let c = store.count(for: smart)
+                        if c > 0 {
+                            Text("\(c)")
+                                .font(.caption2.monospacedDigit().weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1.5)
+                                .background(Color.primary.opacity(0.08), in: Capsule())
                         }
                     }
+                    .tag(SidebarSelection.smart(smart))
                 }
             }
 
             Section("Studio") {
-                NavigationLink(value: SidebarSelection.documentStudio) {
-                    Label("Doc Writer", systemImage: "doc.text.fill")
-                }
-                NavigationLink(value: SidebarSelection.photoStudio) {
-                    Label("Photo Studio", systemImage: "wand.and.stars")
-                }
-                NavigationLink(value: SidebarSelection.videoStudio) {
-                    Label("Video Studio", systemImage: "scissors")
-                }
+                Label("Doc Writer", systemImage: "doc.text.fill")
+                    .tag(SidebarSelection.documentStudio)
+                Label("Photo Studio", systemImage: "wand.and.stars")
+                    .tag(SidebarSelection.photoStudio)
+                Label("Video Studio", systemImage: "scissors")
+                    .tag(SidebarSelection.videoStudio)
+                Label("Wi-Fi Share", systemImage: "qrcode.viewfinder")
+                    .tag(SidebarSelection.wifiShare)
             }
 
             Section {
@@ -214,19 +292,18 @@ public struct MainWindowView: View {
                         .foregroundStyle(.tertiary)
                 } else {
                     ForEach(store.folders) { folder in
-                        NavigationLink(value: SidebarSelection.folder(folder.id)) {
-                            Label(folder.name, systemImage: "folder")
-                                .lineLimit(1)
-                        }
-                        .contextMenu {
-                            Button("Reveal in Finder") {
-                                NSWorkspace.shared.activateFileViewerSelecting([folder.url])
+                        Label(folder.name, systemImage: "folder")
+                            .lineLimit(1)
+                            .tag(SidebarSelection.folder(folder.id))
+                            .contextMenu {
+                                Button("Reveal in Finder") {
+                                    NSWorkspace.shared.activateFileViewerSelecting([folder.url])
+                                }
+                                Divider()
+                                Button("Remove Folder", role: .destructive) {
+                                    store.removeFolder(folder)
+                                }
                             }
-                            Divider()
-                            Button("Remove Folder", role: .destructive) {
-                                store.removeFolder(folder)
-                            }
-                        }
                     }
                 }
             } header: {
@@ -243,21 +320,20 @@ public struct MainWindowView: View {
                         .foregroundStyle(.tertiary)
                 } else {
                     ForEach(store.collections) { col in
-                        NavigationLink(value: SidebarSelection.collection(col.id)) {
-                            HStack {
-                                Label(col.name, systemImage: col.symbol)
-                                    .lineLimit(1)
-                                Spacer()
-                                if !col.itemIDs.isEmpty {
-                                    Text("\(col.itemIDs.count)")
-                                        .font(.caption2.monospacedDigit().weight(.medium))
-                                        .foregroundStyle(.secondary)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 1.5)
-                                        .background(Color.primary.opacity(0.08), in: Capsule())
-                                }
+                        HStack {
+                            Label(col.name, systemImage: col.symbol)
+                                .lineLimit(1)
+                            Spacer()
+                            if !col.itemIDs.isEmpty {
+                                Text("\(col.itemIDs.count)")
+                                    .font(.caption2.monospacedDigit().weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1.5)
+                                    .background(Color.primary.opacity(0.08), in: Capsule())
                             }
                         }
+                        .tag(SidebarSelection.collection(col.id))
                         .contextMenu {
                             Button("Share Collection…") {
                                 let ids = Set(col.itemIDs)
@@ -283,19 +359,22 @@ public struct MainWindowView: View {
             .collapsible(false)
         }
         .listStyle(.sidebar)
-        .navigationSplitViewColumnWidth(min: 220, ideal: 245, max: 300)
+        .font(.system(size: 14, weight: .regular))
+        .scrollContentBackground(.hidden)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            Button {
-                store.promptAddFolder()
-            } label: {
-                Label("Open Folder…", systemImage: "folder.badge.plus")
-                    .frame(maxWidth: .infinity)
+            VStack(spacing: 0) {
+                Divider()
+                Button {
+                    store.promptAddFolder()
+                } label: {
+                    Label("Open Folder…", systemImage: "folder.badge.plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 12)
         }
         .onChange(of: store.selection) { _, _ in
             videoController.stop()
@@ -412,6 +491,7 @@ public struct MainWindowView: View {
         case .photoStudio: return "Photo Studio"
         case .videoStudio: return "Video Studio"
         case .documentStudio: return "Doc Writer"
+        case .wifiShare: return "Wi-Fi Share"
         }
     }
 
