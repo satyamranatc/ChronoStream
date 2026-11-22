@@ -1,4 +1,4 @@
-name: macOS CI
+name: Cross-Platform CI (macOS & Windows)
 
 on:
   push:
@@ -11,8 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: Build & Test (macOS Apple Silicon)
+  build-macos:
+    name: Build & Test macOS (Apple Silicon)
     runs-on: macos-15
 
     steps:
@@ -27,3 +27,26 @@ jobs:
 
       - name: Run Unit Tests
         run: swift test
+
+  build-windows:
+    name: Typecheck & Build Windows (Electron)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        working-directory: windows
+        run: npm install
+
+      - name: Typecheck & Production Build
+        working-directory: windows
+        run: |
+          npm run typecheck
+          npm run build:web

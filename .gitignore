@@ -13,6 +13,10 @@ dist/
 *.app
 *.dmg
 *.zip
+*.exe
+windows/node_modules/
+windows/dist/
+windows/dist-installer/
 
 # macOS & Editor
 .DS_Store

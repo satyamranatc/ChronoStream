@@ -4,6 +4,12 @@ All notable changes to **ChronoStream** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-11-22
+
+### Added
+- **Windows Edition (`windows/`)**: Complete Electron + React + TypeScript + Tailwind CSS desktop app matching macOS v2.1.0 UI and features (Pure Light/Dark Apple UI, 2-tab Dashboard with Charts, Hardware Video Player with hover scrubbing & FFmpeg bridge, Music Studio, `.docx`/PDF Doc Writer, Photo/Video Studios, Secure Two-Way Wi-Fi QR Share, and Smart HDMI Displays).
+- **Automated Cross-Platform CI & Releases**: Updated `.github/workflows/ci.yml` and `.github/workflows/release.yml` to build and publish both `ChronoStream-2.2.0-arm64.dmg` (macOS) and `ChronoStream-2.2.0-Setup-x64.exe` (Windows) automatically on every release tag.
+
 ## [2.1.0] - 2026-11-21
 
 ### Added

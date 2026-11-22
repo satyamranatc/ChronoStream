@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+:root {
+  --cs-canvas: #F5F7FA;
+  --cs-sidebar: #F8FAFC;
+  --cs-surface: #FFFFFF;
+  --cs-surface-subtle: #F1F5F9;
+  --cs-border: rgba(15, 23, 42, 0.08);
+  --cs-text: #0F172A;
+  --cs-text-secondary: #475569;
+  --cs-text-tertiary: #94A3B8;
+  --cs-accent: #008080;
+  --cs-accent-hover: #006666;
+  --cs-accent-soft: rgba(0, 128, 128, 0.12);
+  --cs-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+.dark {
+  --cs-canvas: #141619;
+  --cs-sidebar: #1A1D21;
+  --cs-surface: #1F2329;
+  --cs-surface-subtle: #282D35;
+  --cs-border: rgba(255, 255, 255, 0.09);
+  --cs-text: #F8FAFC;
+  --cs-text-secondary: #94A3B8;
+  --cs-text-tertiary: #64748B;
+  --cs-accent: #14B8A6;
+  --cs-accent-hover: #0D9488;
+  --cs-accent-soft: rgba(20, 184, 166, 0.16);
+  --cs-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  background-color: var(--cs-canvas);
+  color: var(--cs-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", Inter, sans-serif;
+}
+
+.cs-card {
+  background-color: var(--cs-surface);
+  border: 1px solid var(--cs-border);
+  box-shadow: var(--cs-shadow);
+}
+
+.cs-drag-region {
+  -webkit-app-region: drag;
+}
+
+.cs-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Crisp thin scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.55);
+}

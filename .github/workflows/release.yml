@@ -1,4 +1,4 @@
-name: Release macOS App
+name: Release macOS & Windows
 
 on:
   push:
@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build & Publish GitHub Release
+  release-macos:
+    name: Build & Publish macOS (.dmg & .zip)
     runs-on: macos-15
 
     steps:
@@ -21,12 +21,12 @@ jobs:
         id: meta
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Build & Package Release Artifacts
+      - name: Build & Package macOS Release Artifacts
         run: |
           chmod +x scripts/build-release.sh
           ./scripts/build-release.sh "${{ steps.meta.outputs.version }}"
 
-      - name: Publish GitHub Release
+      - name: Upload macOS Assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "ChronoStream ${{ github.ref_name }}"
@@ -35,3 +35,34 @@ jobs:
             dist/ChronoStream-${{ steps.meta.outputs.version }}-arm64.dmg
             dist/ChronoStream-${{ steps.meta.outputs.version }}-arm64.zip
             dist/SHA256SUMS.txt
+
+  release-windows:
+    name: Build & Publish Windows (.exe Installer)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Windows App Dependencies
+        working-directory: windows
+        run: npm install
+
+      - name: Typecheck & Build Windows NSIS Installer (.exe)
+        working-directory: windows
+        run: |
+          npm run typecheck
+          npm run build:win
+
+      - name: Upload Windows Installer to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "ChronoStream ${{ github.ref_name }}"
+          files: |
+            windows/dist-installer/*.exe
+            windows/dist-installer/*.blockmap

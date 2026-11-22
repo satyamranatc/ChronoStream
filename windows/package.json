@@ -1,0 +1,67 @@
+{
+  "name": "chronostream-windows",
+  "version": "2.2.0",
+  "description": "ChronoStream — Native-grade Unified Media Player, Creative Studio, Word (.docx) Authoring & Secure Wi-Fi Sharing Suite for Windows",
+  "author": "Satyam Rana <satyamranatc@gmail.com>",
+  "license": "MIT",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev:vite": "vite",
+    "dev": "VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "typecheck": "tsc --noEmit",
+    "build:web": "vite build",
+    "build:win": "vite build && electron-builder --win --x64",
+    "build:mac-preview": "vite build && electron-builder --mac --dir"
+  },
+  "dependencies": {
+    "docx": "^9.1.0",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.8.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "@vitejs/plugin-react": "^4.3.4"
+  },
+  "build": {
+    "appId": "com.satyamrana.chronostream",
+    "productName": "ChronoStream",
+    "directories": {
+      "output": "dist-installer"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "../Resources/icon.png",
+      "artifactName": "ChronoStream-${version}-Setup-x64.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
