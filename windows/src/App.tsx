@@ -13,7 +13,8 @@ import VideoStageView from "./components/VideoStageView";
 import AudioStageView from "./components/AudioStageView";
 import DocumentStudioView from "./components/DocumentStudioView";
 import WiFiShareHubView from "./components/WiFiShareHubView";
-import { PhotoViewerView, PDFReaderView, PhotoStudioView, VideoStudioView } from "./components/MediaViewers";
+import PDFReaderView from "./components/PDFReaderView";
+import { PhotoViewerView, PhotoStudioView, VideoStudioView } from "./components/MediaViewers";
 import DisplaysPopover from "./components/DisplaysPopover";
 import SettingsModal from "./components/SettingsModal";
 

@@ -4,6 +4,15 @@ All notable changes to **ChronoStream** are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-11-22
+
+### Added
+- **Best-in-Segment Book & PDF Reader (macOS & Windows)**:
+  - **4 Eye-Friendly Reading Themes**: Paper, Sepia (warm book tint), Soft Gray (e-ink contrast), and Night (inverted dark reading mode).
+  - **Book Layout Modes (macOS)**: Continuous Scroll, Single Page, and Two-Page Open Book Spread (`PDFDisplayMode.twoUpContinuous`).
+  - **Chapters, Bookmarks & Study Notes Drawer**: Automatic PDF Table of Contents (`PDFOutline`), 1-click page bookmarks, and page-linked reading notes persisted locally per book.
+  - **Automatic Last-Page Resume, Reading Progress Bar & Zen Focus Mode**: Remembers exact last-read page, shows completion percentage + estimated minutes left, direct page jump, and distraction-free Zen mode.
+
 ## [2.2.0] - 2026-11-22
 
 ### Added
