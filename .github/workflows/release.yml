@@ -27,7 +27,7 @@ jobs:
           ./scripts/build-release.sh "${{ steps.meta.outputs.version }}"
 
       - name: Upload macOS Assets to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "ChronoStream ${{ github.ref_name }}"
           generate_release_notes: true
@@ -60,7 +60,7 @@ jobs:
           npm run build:win
 
       - name: Upload Windows Installer to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "ChronoStream ${{ github.ref_name }}"
           files: |
