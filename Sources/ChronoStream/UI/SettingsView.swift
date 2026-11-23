@@ -87,6 +87,14 @@ public struct SettingsView: View {
                         UISoundFeedback.shared.playClick()
                     }
                 }
+
+                HStack {
+                    Text("Welcome Walkthrough")
+                    Spacer()
+                    Button("Replay Welcome Tour") {
+                        NotificationCenter.default.post(name: Notification.Name("ChronoStreamReplayWelcome"), object: nil)
+                    }
+                }
             }
 
             Section("Playback") {

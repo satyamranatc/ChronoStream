@@ -5,30 +5,29 @@ import UniformTypeIdentifiers
 private struct LazyThumbnailView: View {
     let item: MediaItem
     let size: CGSize
+    var flexibleWidth: Bool = false
     @State private var image: NSImage?
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.primary.opacity(0.06))
-
-            if let img = image {
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: size.width, height: size.height)
-                    .clipped()
-            } else {
-                Image(systemName: item.kind.systemImage)
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(Color.primary.opacity(0.06))
+            .overlay {
+                if let img = image {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Image(systemName: item.kind.systemImage)
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
             }
-        }
-        .frame(width: size.width, height: size.height)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .task(id: item.id) {
-            image = await ThumbnailCache.shared.thumbnail(for: item, maxPixelSize: Int(max(size.width, size.height) * 2))
-        }
+            .frame(maxWidth: flexibleWidth ? .infinity : size.width)
+            .frame(height: size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .task(id: item.id) {
+                image = await ThumbnailCache.shared.thumbnail(for: item, maxPixelSize: Int(max(size.width, size.height) * 2))
+            }
     }
 }
 
@@ -39,25 +38,27 @@ private struct SidebarSectionHeader: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .center, spacing: 6) {
             Text(title)
-            Spacer()
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(.secondary)
             Button(action: action) {
                 Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isHovered ? .primary : .secondary)
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(isHovered ? Color.white : Color.secondary)
+                    .frame(width: 18, height: 18)
                     .background(
                         Circle()
-                            .fill(Color.primary.opacity(isHovered ? 0.14 : 0.06))
+                            .fill(isHovered ? Color.teal : Color.primary.opacity(0.08))
                     )
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .onHover { isHovered = $0 }
             .help(helpText)
+            Spacer()
         }
-        .padding(.trailing, 4)
+        .padding(.vertical, 1)
     }
 }
 
@@ -73,16 +74,26 @@ public struct MainWindowView: View {
     @State private var shareSession = LocalShareSession()
     @State private var itemsToShare: [MediaItem] = []
     @State private var showShareSheet = false
-    @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
+    @AppStorage("hasSeenOnboardingV2") private var hasSeenWelcome = false
     @AppStorage("hasAskedDefaultPlayer") private var hasAskedDefaultPlayer = false
     @AppStorage("appThemeMode") private var appThemeMode: String = "light"
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showSplash = true
     @State private var showWelcomeSheet = false
+    @State private var showConnectFolderPrompt = false
     @State private var showDefaultBanner = false
     @State private var showDisplayPopover = false
+    @State private var lastOpenedItemID: String?
+    @State private var focusedItemID: String?
+    @State private var selectedItemIDs: Set<String> = []
+    @State private var isSelectionMode: Bool = false
+    @State private var itemToRename: MediaItem?
+    @State private var renameText: String = ""
+    @State private var explorerWidth: CGFloat = 900
+    @State private var explorerKeyMonitor: Any?
     private let displayManager = DisplayManager.shared
 
-    private let gridColumns = [GridItem(.adaptive(minimum: 175, maximum: 230), spacing: 16)]
+    private let gridColumns = [GridItem(.adaptive(minimum: 205, maximum: 250), spacing: 16)]
 
     public init(store: LibraryStore, videoController: VideoPlayerController, audioController: AudioPlayerController) {
         self.store = store
@@ -102,25 +113,58 @@ public struct MainWindowView: View {
             ZStack(alignment: .bottom) {
                 if store.selection == .dashboard && store.activeItem == nil {
                     DashboardView(store: store)
-                } else if store.selection == .photoStudio {
+                } else if store.selection == .photoStudio && store.activeItem == nil {
                     PhotoStudioView(store: store)
-                } else if store.selection == .videoStudio {
+                } else if store.selection == .videoStudio && store.activeItem == nil {
                     VideoStudioView(store: store)
-                } else if store.selection == .documentStudio {
+                } else if store.selection == .documentStudio && store.activeItem == nil {
                     DocumentStudioView()
-                } else if store.selection == .wifiShare {
+                } else if store.selection == .wifiShare && store.activeItem == nil {
                     WiFiShareHubView { receivedURL in
                         store.handleDroppedURLs([receivedURL], openFirst: true)
                     }
-                } else if let active = store.activeItem {
-                    activeViewer(for: active)
                 } else {
-                    explorerContent
+                    // Keep explorerContent alive underneath activeViewer so ScrollView
+                    // preserves exact pixel scroll position & thumbnails on return.
+                    ZStack {
+                        if isExplorerSelection {
+                            explorerContent
+                                .opacity(store.activeItem == nil ? 1 : 0)
+                                .allowsHitTesting(store.activeItem == nil)
+                        }
+
+                        if let active = store.activeItem {
+                            activeViewer(for: active)
+                        }
+                    }
                 }
 
                 // Persistent mini-player bar when audio is playing while browsing
                 if store.activeItem?.kind != .audio, let playingAudio = audioController.currentItem {
                     miniAudioBar(for: playingAudio)
+                }
+
+                // Subtle file-operation confirmation toast
+                if let toast = store.fileOpMessage {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.teal)
+                        Text(toast)
+                            .font(.callout.weight(.medium))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.teal.opacity(0.35), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
+                    .padding(.bottom, 18)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .allowsHitTesting(false)
+                }
+            }
+            .onChange(of: store.activeItem?.id) { _, newID in
+                if let newID {
+                    lastOpenedItemID = newID
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -209,6 +253,9 @@ public struct MainWindowView: View {
         .sheet(isPresented: $showNewCollectionSheet) {
             newCollectionDialog
         }
+        .sheet(item: $itemToRename) { target in
+            renameItemDialog(for: target)
+        }
         .sheet(isPresented: $showShareSheet) {
             ShareSheetView(items: itemsToShare, session: shareSession) {
                 showShareSheet = false
@@ -224,15 +271,50 @@ public struct MainWindowView: View {
                 onContinue: {
                     hasSeenWelcome = true
                     showWelcomeSheet = false
+                    if store.folders.isEmpty {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            showConnectFolderPrompt = true
+                        }
+                    }
                 }
             )
         }
-        .onAppear {
-            if !hasSeenWelcome {
-                showWelcomeSheet = true
+        .sheet(isPresented: $showConnectFolderPrompt) {
+            connectFolderPromptSheet
+        }
+        .overlay {
+            if showSplash {
+                SplashScreenView {
+                    withAnimation(.easeOut(duration: 0.35)) {
+                        showSplash = false
+                    }
+                    if !hasSeenWelcome {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            showWelcomeSheet = true
+                        }
+                    } else if store.folders.isEmpty {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            showConnectFolderPrompt = true
+                        }
+                    }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 1.02)))
+                .zIndex(999)
             }
+        }
+        .onAppear {
             if !hasAskedDefaultPlayer && !DefaultAppManager.isDefaultForMP4() {
                 showDefaultBanner = true
+            }
+            installExplorerKeyMonitor()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ChronoStreamReplayWelcome"))) { _ in
+            showWelcomeSheet = true
+        }
+        .onDisappear {
+            if let monitor = explorerKeyMonitor {
+                NSEvent.removeMonitor(monitor)
+                explorerKeyMonitor = nil
             }
         }
         .sheet(item: $store.quickPreviewItem) { item in
@@ -295,7 +377,16 @@ public struct MainWindowView: View {
                         Label(folder.name, systemImage: "folder")
                             .lineLimit(1)
                             .tag(SidebarSelection.folder(folder.id))
+                            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                                handleDropIntoFolder(providers: providers, destination: folder.url)
+                            }
                             .contextMenu {
+                                if store.hasPasteableFiles {
+                                    Button("Paste into \(folder.name)") {
+                                        store.pasteItems(into: folder.url)
+                                    }
+                                    Divider()
+                                }
                                 Button("Reveal in Finder") {
                                     NSWorkspace.shared.activateFileViewerSelecting([folder.url])
                                 }
@@ -420,6 +511,11 @@ public struct MainWindowView: View {
                 Divider()
             }
 
+            if isSelectionMode || selectedItemIDs.count > 1 {
+                selectionActionBar
+                Divider()
+            }
+
             if store.filteredItems.isEmpty {
                 emptyExplorerState
             } else {
@@ -436,6 +532,25 @@ public struct MainWindowView: View {
         .searchable(text: $store.searchQuery, placement: .toolbar, prompt: "Search media…")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isSelectionMode.toggle()
+                        if !isSelectionMode { selectedItemIDs.removeAll() }
+                    }
+                } label: {
+                    Label(isSelectionMode ? "Done Selecting" : "Select", systemImage: isSelectionMode ? "checkmark.circle.fill" : "checkmark.circle")
+                }
+                .help("Select Multiple Items for Cut, Copy, Move, Drag or Trash (or ⌘-Click)")
+
+                if store.hasPasteableFiles {
+                    Button {
+                        store.pasteItems()
+                    } label: {
+                        Label("Paste", systemImage: "doc.on.clipboard")
+                    }
+                    .help(store.clipboardMode == .cut ? "Move Cut Items Here" : "Paste Copied Items Here")
+                }
+
                 Button {
                     let list = store.activeItem.map { [$0] } ?? Array(store.filteredItems.prefix(50))
                     if !list.isEmpty {
@@ -482,6 +597,15 @@ public struct MainWindowView: View {
         }
     }
 
+    private var isExplorerSelection: Bool {
+        switch store.selection {
+        case .smart, .folder, .collection:
+            return true
+        case .dashboard, .photoStudio, .videoStudio, .documentStudio, .wifiShare:
+            return false
+        }
+    }
+
     private var currentTitle: String {
         switch store.selection {
         case .dashboard: return "Dashboard"
@@ -517,171 +641,632 @@ public struct MainWindowView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var gridColumnCount: Int {
+        max(1, Int((explorerWidth - 40 + 16) / (205 + 16)))
+    }
+
     private var gridExplorer: some View {
-        ScrollView {
-            LazyVGrid(columns: gridColumns, spacing: 18) {
-                ForEach(store.filteredItems) { item in
-                    VStack(alignment: .leading, spacing: 6) {
-                        ZStack(alignment: .topTrailing) {
-                            LazyThumbnailView(item: item, size: CGSize(width: 196, height: 118))
-
-                            if item.isFavorite {
-                                Image(systemName: "heart.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.red)
-                                    .padding(6)
-                                    .background(.ultraThinMaterial, in: Circle())
-                                    .padding(6)
-                            }
-                        }
-                        .overlay(alignment: .bottomLeading) {
-                            Text(item.fileExtension)
-                                .font(.system(size: 9.5, weight: .semibold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
-                                .padding(6)
-                        }
-
-                        Text(item.name)
-                            .font(.callout.weight(.medium))
-                            .lineLimit(1)
-
-                        HStack(spacing: 4) {
-                            Text(item.modifiedDate.formatted(date: .abbreviated, time: .omitted))
-                            Text("·")
-                            Text(MediaFormatting.byteString(item.fileSize))
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-
-                        if item.lastPosition > 5, item.kind == .video || item.kind == .audio {
-                            Text("Resume \(MediaFormatting.timeString(item.lastPosition))")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(Color.accentColor)
-                        }
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVGrid(columns: gridColumns, spacing: 18) {
+                    ForEach(store.filteredItems) { item in
+                        gridCard(for: item, isLastPlayed: item.id == lastOpenedItemID)
                     }
-                    .padding(8)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture { store.openItem(item) }
-                    .contextMenu { itemContextMenu(item) }
+                }
+                .padding(20)
+            }
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { explorerWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, w in explorerWidth = w }
+                }
+            )
+            .onChange(of: focusedItemID) { _, newID in
+                if let newID {
+                    withAnimation(.easeInOut(duration: 0.14)) {
+                        proxy.scrollTo(newID)
+                    }
                 }
             }
-            .padding(20)
         }
     }
 
-    private var listExplorer: some View {
-        List {
-            ForEach(store.filteredItems) { item in
-                HStack(spacing: 12) {
-                    LazyThumbnailView(item: item, size: CGSize(width: 56, height: 36))
+    private func gridCard(for item: MediaItem, isLastPlayed: Bool) -> some View {
+        let isSelected = selectedItemIDs.contains(item.id)
+        let cardFill: Color = isSelected
+            ? Color.accentColor.opacity(0.14)
+            : (isLastPlayed ? Color.teal.opacity(0.11) : Color(nsColor: .controlBackgroundColor).opacity(0.65))
+        let borderColor: Color = isSelected ? Color.accentColor : (isLastPlayed ? Color.teal : Color.primary.opacity(0.06))
+        let borderWidth: CGFloat = (isSelected || isLastPlayed) ? 2 : 1
+        let shadowColor: Color = isSelected ? Color.accentColor.opacity(0.2) : (isLastPlayed ? Color.teal.opacity(0.18) : Color.clear)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.name)
-                            .font(.callout.weight(.medium))
-                            .lineLimit(1)
-                        HStack(spacing: 6) {
-                            Text(item.kind.displayName)
-                            Text("·")
-                            Text(item.fileExtension)
-                            if item.lastPosition > 5 {
-                                Text("· Resume \(MediaFormatting.timeString(item.lastPosition))")
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+        return VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .topTrailing) {
+                LazyThumbnailView(item: item, size: CGSize(width: 220, height: 124), flexibleWidth: true)
+
+                HStack(spacing: 4) {
+                    if item.isFavorite {
+                        Image(systemName: "heart.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .padding(5)
+                            .background(.ultraThinMaterial, in: Circle())
                     }
-
-                    Spacer()
-
-                    Text(item.modifiedDate.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 145, alignment: .trailing)
-
-                    Text(MediaFormatting.byteString(item.fileSize))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 78, alignment: .trailing)
-
-                    Button {
-                        itemsToShare = [item]
-                        showShareSheet = true
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .foregroundStyle(.secondary)
+                    if isSelectionMode || isSelected {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(isSelected ? Color.accentColor : Color.white.opacity(0.85))
+                            .background(Circle().fill(isSelected ? Color.white : Color.black.opacity(0.35)))
                     }
-                    .buttonStyle(.plain)
-                    .help("Share via AirDrop or Wi-Fi QR (Android & iPhone)")
-
-                    Button {
-                        store.quickPreviewItem = item
-                    } label: {
-                        Image(systemName: "eye")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Quick Preview")
-
-                    Button {
-                        store.toggleFavorite(item)
-                    } label: {
-                        Image(systemName: item.isFavorite ? "heart.fill" : "heart")
-                            .foregroundStyle(item.isFavorite ? .red : .secondary)
-                    }
-                    .buttonStyle(.plain)
                 }
-                .padding(.vertical, 3)
-                .contentShape(Rectangle())
-                .onTapGesture { store.openItem(item) }
-                .contextMenu { itemContextMenu(item) }
+                .padding(6)
+            }
+            .overlay(alignment: .topLeading) {
+                if isLastPlayed {
+                    Label("Last Played", systemImage: "play.fill")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.teal, in: Capsule())
+                        .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+                        .padding(6)
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                Text(item.fileExtension)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                    .padding(6)
+            }
+
+            Text(item.name)
+                .font(.callout.weight(isLastPlayed || isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? Color.accentColor : (isLastPlayed ? Color.teal : .primary))
+                .lineLimit(1)
+
+            HStack(spacing: 4) {
+                Text(item.modifiedDate.formatted(date: .abbreviated, time: .omitted))
+                Text("·")
+                Text(MediaFormatting.byteString(item.fileSize))
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+
+            if item.lastPosition > 5, item.kind == .video || item.kind == .audio {
+                Text("Resume \(MediaFormatting.timeString(item.lastPosition))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(Color.accentColor)
             }
         }
-        .listStyle(.inset(alternatesRowBackgrounds: true))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(cardFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(borderColor, lineWidth: borderWidth)
+        )
+        .shadow(color: shadowColor, radius: 6, y: 2)
+        .id(item.id)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            openExplorerItem(item)
+        }
+        .onTapGesture(count: 1) {
+            handleItemTap(item)
+        }
+        .onDrag {
+            NSItemProvider(contentsOf: item.url) ?? NSItemProvider(object: item.url as NSURL)
+        }
+        .contextMenu { itemContextMenu(item) }
+    }
+
+    private var listExplorer: some View {
+        ScrollViewReader { proxy in
+            List {
+                ForEach(store.filteredItems) { item in
+                    listRow(
+                        for: item,
+                        isLastPlayed: item.id == lastOpenedItemID,
+                        isSelected: selectedItemIDs.contains(item.id)
+                    )
+                }
+            }
+            .listStyle(.inset(alternatesRowBackgrounds: true))
+            .onChange(of: focusedItemID) { _, newID in
+                if let newID {
+                    withAnimation(.easeInOut(duration: 0.14)) {
+                        proxy.scrollTo(newID)
+                    }
+                }
+            }
+        }
+    }
+
+    private func listRow(for item: MediaItem, isLastPlayed: Bool, isSelected: Bool) -> some View {
+        let rowBg: Color = isSelected
+            ? Color.accentColor.opacity(0.14)
+            : (isLastPlayed ? Color.teal.opacity(0.11) : Color.clear)
+        let rowStroke: Color = isSelected
+            ? Color.accentColor
+            : (isLastPlayed ? Color.teal.opacity(0.65) : Color.clear)
+        let titleColor: Color = isSelected ? Color.accentColor : (isLastPlayed ? Color.teal : .primary)
+
+        return HStack(spacing: 12) {
+            if isSelectionMode || isSelected {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.body)
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+            }
+            LazyThumbnailView(item: item, size: CGSize(width: 56, height: 36))
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(item.name)
+                        .font(.callout.weight(isLastPlayed || isSelected ? .semibold : .medium))
+                        .foregroundStyle(titleColor)
+                        .lineLimit(1)
+                    if isLastPlayed {
+                        Text("Last Played")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1.5)
+                            .background(Color.teal, in: Capsule())
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text(item.kind.displayName)
+                    Text("·")
+                    Text(item.fileExtension)
+                    if item.lastPosition > 5 {
+                        Text("· Resume \(MediaFormatting.timeString(item.lastPosition))")
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text(item.modifiedDate.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 145, alignment: .trailing)
+
+            Text(MediaFormatting.byteString(item.fileSize))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 78, alignment: .trailing)
+
+            Button {
+                itemsToShare = [item]
+                showShareSheet = true
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Share via AirDrop or Wi-Fi QR (Android & iPhone)")
+
+            Button {
+                store.quickPreviewItem = item
+            } label: {
+                Image(systemName: "eye")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Quick Preview")
+
+            Button {
+                store.toggleFavorite(item)
+            } label: {
+                Image(systemName: item.isFavorite ? "heart.fill" : "heart")
+                    .foregroundStyle(item.isFavorite ? .red : .secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .background(rowBg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(rowStroke, lineWidth: 1.5)
+        )
+        .id(item.id)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            openExplorerItem(item)
+        }
+        .onTapGesture(count: 1) {
+            handleItemTap(item)
+        }
+        .onDrag {
+            NSItemProvider(contentsOf: item.url) ?? NSItemProvider(object: item.url as NSURL)
+        }
+        .contextMenu { itemContextMenu(item) }
+    }
+
+    private func openExplorerItem(_ item: MediaItem) {
+        lastOpenedItemID = item.id
+        focusedItemID = item.id
+        selectedItemIDs = [item.id]
+        store.openItem(item)
+    }
+
+    private func handleItemTap(_ item: MediaItem) {
+        let flags = NSEvent.modifierFlags
+        let cmdHeld = flags.contains(.command)
+        let shiftHeld = flags.contains(.shift)
+
+        if shiftHeld, let anchorID = focusedItemID,
+           let startIdx = store.filteredItems.firstIndex(where: { $0.id == anchorID }),
+           let endIdx = store.filteredItems.firstIndex(where: { $0.id == item.id }) {
+            let lo = min(startIdx, endIdx)
+            let hi = max(startIdx, endIdx)
+            selectedItemIDs = Set(store.filteredItems[lo...hi].map(\.id))
+            focusedItemID = item.id
+        } else if isSelectionMode || cmdHeld {
+            toggleSelection(item)
+            focusedItemID = item.id
+        } else {
+            // Single click selects the item (Finder-style); double-click or Return plays it
+            selectedItemIDs = [item.id]
+            focusedItemID = item.id
+        }
+    }
+
+    private func installExplorerKeyMonitor() {
+        if let existing = explorerKeyMonitor {
+            NSEvent.removeMonitor(existing)
+            explorerKeyMonitor = nil
+        }
+        explorerKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard store.activeItem == nil,
+                  isExplorerSelection,
+                  itemToRename == nil,
+                  !showNewCollectionSheet,
+                  !showShareSheet,
+                  !showWelcomeSheet,
+                  store.quickPreviewItem == nil else {
+                return event
+            }
+            if let responder = NSApp.keyWindow?.firstResponder,
+               responder is NSTextView || responder is NSTextField {
+                return event
+            }
+            return handleExplorerKeyDown(event) ? nil : event
+        }
+    }
+
+    private func handleExplorerKeyDown(_ event: NSEvent) -> Bool {
+        let items = store.filteredItems
+        guard !items.isEmpty else { return false }
+
+        let cmd = event.modifierFlags.contains(.command)
+        let shift = event.modifierFlags.contains(.shift)
+
+        if cmd {
+            if let ch = event.charactersIgnoringModifiers?.lowercased() {
+                switch ch {
+                case "a":
+                    selectedItemIDs = Set(items.map(\.id))
+                    return true
+                case "c":
+                    if !selectedMediaItems.isEmpty { store.copyItems(selectedMediaItems); return true }
+                case "x":
+                    if !selectedMediaItems.isEmpty { store.cutItems(selectedMediaItems); return true }
+                case "v":
+                    if store.hasPasteableFiles { store.pasteItems(); return true }
+                default:
+                    break
+                }
+            }
+            if event.keyCode == 51, !selectedMediaItems.isEmpty { // ⌘⌫ Move to Trash
+                let targets = selectedMediaItems
+                store.trashItems(targets)
+                selectedItemIDs.removeAll()
+                return true
+            }
+            return false
+        }
+
+        let currentID = focusedItemID ?? selectedItemIDs.first ?? lastOpenedItemID
+        let currentIdx = currentID.flatMap { id in items.firstIndex(where: { $0.id == id }) }
+        let stepRow = (store.viewMode == .grid) ? gridColumnCount : 1
+
+        func moveSelection(by delta: Int) {
+            let nextIdx: Int
+            if let idx = currentIdx {
+                nextIdx = max(0, min(items.count - 1, idx + delta))
+            } else {
+                nextIdx = 0
+            }
+            let target = items[nextIdx]
+            focusedItemID = target.id
+            if shift {
+                selectedItemIDs.insert(target.id)
+            } else {
+                selectedItemIDs = [target.id]
+            }
+        }
+
+        switch event.keyCode {
+        case 123: // Left arrow
+            moveSelection(by: -1)
+            return true
+        case 124: // Right arrow
+            moveSelection(by: 1)
+            return true
+        case 126: // Up arrow
+            moveSelection(by: -stepRow)
+            return true
+        case 125: // Down arrow
+            moveSelection(by: stepRow)
+            return true
+        case 36, 76: // Return / Enter — play selected item
+            if let idx = currentIdx {
+                openExplorerItem(items[idx])
+                return true
+            }
+            return false
+        case 49: // Space — Quick Preview
+            if let idx = currentIdx {
+                store.quickPreviewItem = items[idx]
+                return true
+            }
+            return false
+        case 53: // Escape — clear selection
+            if !selectedItemIDs.isEmpty || isSelectionMode {
+                selectedItemIDs.removeAll()
+                isSelectionMode = false
+                return true
+            }
+            return false
+        default:
+            return false
+        }
+    }
+
+    private func toggleSelection(_ item: MediaItem) {
+        if selectedItemIDs.contains(item.id) {
+            selectedItemIDs.remove(item.id)
+        } else {
+            selectedItemIDs.insert(item.id)
+        }
+    }
+
+    private func actionTargets(for item: MediaItem) -> [MediaItem] {
+        if selectedItemIDs.contains(item.id) && selectedItemIDs.count > 1 {
+            return store.filteredItems.filter { selectedItemIDs.contains($0.id) }
+        }
+        return [item]
+    }
+
+    private var selectedMediaItems: [MediaItem] {
+        store.filteredItems.filter { selectedItemIDs.contains($0.id) }
+    }
+
+    private var selectionActionBar: some View {
+        HStack(spacing: 10) {
+            Text(selectedItemIDs.isEmpty ? "Click items or ⌘-Click to select" : "\(selectedItemIDs.count) selected")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(selectedItemIDs.isEmpty ? .secondary : .primary)
+
+            Button("Select All") {
+                selectedItemIDs = Set(store.filteredItems.map(\.id))
+            }
+            .controlSize(.small)
+
+            if !selectedItemIDs.isEmpty {
+                Button("Clear") { selectedItemIDs.removeAll() }
+                    .controlSize(.small)
+            }
+
+            Spacer()
+
+            Group {
+                Button {
+                    store.cutItems(selectedMediaItems)
+                } label: {
+                    Label("Cut", systemImage: "scissors")
+                }
+
+                Button {
+                    store.copyItems(selectedMediaItems)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+
+                if store.hasPasteableFiles {
+                    Button {
+                        store.pasteItems()
+                    } label: {
+                        Label("Paste", systemImage: "doc.on.clipboard")
+                    }
+                }
+
+                Button {
+                    store.promptMoveItems(selectedMediaItems)
+                    selectedItemIDs.removeAll()
+                } label: {
+                    Label("Move…", systemImage: "folder")
+                }
+
+                Button {
+                    itemsToShare = selectedMediaItems
+                    showShareSheet = true
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+
+                Button(role: .destructive) {
+                    store.trashItems(selectedMediaItems)
+                    selectedItemIDs.removeAll()
+                } label: {
+                    Label("Trash", systemImage: "trash")
+                }
+            }
+            .controlSize(.small)
+            .disabled(selectedItemIDs.isEmpty)
+
+            Button("Done") {
+                isSelectionMode = false
+                selectedItemIDs.removeAll()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.07))
     }
 
     @ViewBuilder
     private func itemContextMenu(_ item: MediaItem) -> some View {
-        Button("Open") { store.openItem(item) }
-        Button("Quick Preview") { store.quickPreviewItem = item }
-        Button("Share…") {
-            itemsToShare = [item]
-            showShareSheet = true
+        let targets = actionTargets(for: item)
+        let suffix = targets.count > 1 ? " (\(targets.count))" : ""
+        let isSelected = selectedItemIDs.contains(item.id)
+
+        Button {
+            lastOpenedItemID = item.id
+            store.openItem(item)
+        } label: {
+            Label("Open", systemImage: "play.fill")
         }
-        Button("Share via AirDrop") {
-            if let service = NSSharingService(named: .sendViaAirDrop) {
-                service.perform(withItems: [item.url])
-            } else {
-                itemsToShare = [item]
-                showShareSheet = true
+
+        Button {
+            store.quickPreviewItem = item
+        } label: {
+            Label("Quick Preview", systemImage: "eye")
+        }
+
+        Button {
+            toggleSelection(item)
+        } label: {
+            Label(isSelected ? "Deselect" : "Select", systemImage: isSelected ? "checkmark.circle.fill" : "checkmark.circle")
+        }
+
+        Button {
+            selectedItemIDs = Set(store.filteredItems.map(\.id))
+            isSelectionMode = true
+        } label: {
+            Label("Select All", systemImage: "checkmark.rectangle.stack")
+        }
+
+        Divider()
+
+        Button {
+            store.cutItems(targets)
+        } label: {
+            Label("Cut\(suffix)", systemImage: "scissors")
+        }
+
+        Button {
+            store.copyItems(targets)
+        } label: {
+            Label("Copy\(suffix)", systemImage: "doc.on.doc")
+        }
+
+        if store.hasPasteableFiles {
+            Button {
+                store.pasteItems(into: item.url.deletingLastPathComponent())
+            } label: {
+                Label("Paste into This Folder", systemImage: "doc.on.clipboard")
             }
         }
-        Divider()
-        Button(item.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
-            store.toggleFavorite(item)
+
+        Button {
+            store.duplicateItems(targets)
+        } label: {
+            Label("Duplicate\(suffix)", systemImage: "plus.square.on.square")
         }
+
+        if targets.count == 1 {
+            Button {
+                renameText = item.name
+                itemToRename = item
+            } label: {
+                Label("Rename…", systemImage: "pencil")
+            }
+        }
+
+        Button {
+            store.promptMoveItems(targets)
+            selectedItemIDs.subtract(targets.map(\.id))
+        } label: {
+            Label("Move to Folder…\(suffix)", systemImage: "folder")
+        }
+
+        Divider()
+
+        Button {
+            itemsToShare = targets
+            showShareSheet = true
+        } label: {
+            Label("Share…\(suffix)", systemImage: "square.and.arrow.up")
+        }
+
+        Button {
+            if let service = NSSharingService(named: .sendViaAirDrop) {
+                service.perform(withItems: targets.map(\.url))
+            } else {
+                itemsToShare = targets
+                showShareSheet = true
+            }
+        } label: {
+            Label("Share via AirDrop\(suffix)", systemImage: "airplayaudio")
+        }
+
+        Button {
+            for t in targets { store.toggleFavorite(t) }
+        } label: {
+            Label(item.isFavorite ? "Remove from Favorites" : "Add to Favorites", systemImage: item.isFavorite ? "heart.slash" : "heart")
+        }
+
         if !store.collections.isEmpty {
             Menu("Add to Collection") {
                 ForEach(store.collections) { col in
-                    Button(col.name) { store.addItem(item, to: col.id) }
+                    Button(col.name) {
+                        for t in targets { store.addItem(t, to: col.id) }
+                    }
                 }
             }
         }
+
         if case .collection(let colID) = store.selection {
             Button("Remove from Collection", role: .destructive) {
-                store.removeItem(item, from: colID)
+                for t in targets { store.removeItem(t, from: colID) }
             }
         }
+
         Divider()
-        Button("Reveal in Finder") { store.revealInFinder(item) }
+
+        Button {
+            store.copyPaths(targets)
+        } label: {
+            Label("Copy Path\(suffix)", systemImage: "link")
+        }
+
+        Button {
+            store.revealInFinder(item)
+        } label: {
+            Label("Reveal in Finder", systemImage: "finder")
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            store.trashItems(targets)
+            selectedItemIDs.subtract(targets.map(\.id))
+        } label: {
+            Label("Move to Trash\(suffix)", systemImage: "trash")
+        }
     }
 
     // MARK: - Active Media Viewer Dispatch
@@ -775,6 +1360,56 @@ public struct MainWindowView: View {
         .padding(14)
     }
 
+    private var connectFolderPromptSheet: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.teal.opacity(0.12))
+                    .frame(width: 60, height: 60)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.teal.opacity(0.25), lineWidth: 1)
+                    )
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(Color.teal)
+            }
+            .padding(.top, 4)
+
+            VStack(spacing: 6) {
+                Text("Connect a Media Folder")
+                    .font(.title3.weight(.bold))
+
+                Text("Hey! Connect any folder with your videos, music, photos, or PDFs so ChronoStream can show your library right away.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack(spacing: 10) {
+                Button("Not Now") {
+                    showConnectFolderPrompt = false
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+
+                Button {
+                    showConnectFolderPrompt = false
+                    store.promptAddFolder()
+                } label: {
+                    Label("Connect Folder…", systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.teal)
+                .controlSize(.large)
+                .keyboardShortcut(.return, modifiers: [])
+            }
+            .padding(.top, 4)
+        }
+        .padding(28)
+        .frame(width: 420)
+    }
+
     private var newCollectionDialog: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("New Collection")
@@ -795,6 +1430,57 @@ public struct MainWindowView: View {
         }
         .padding(20)
         .frame(width: 340)
+    }
+
+    private func renameItemDialog(for item: MediaItem) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Rename File")
+                .font(.headline)
+            Text("Enter a new filename. The file extension will be preserved automatically if omitted.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Filename", text: $renameText)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit {
+                    if store.renameItem(item, to: renameText) {
+                        itemToRename = nil
+                    }
+                }
+            HStack {
+                Spacer()
+                Button("Cancel") { itemToRename = nil }
+                Button("Rename") {
+                    if store.renameItem(item, to: renameText) {
+                        itemToRename = nil
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+
+    private func handleDropIntoFolder(providers: [NSItemProvider], destination: URL) -> Bool {
+        var handled = false
+        for provider in providers {
+            if provider.canLoadObject(ofClass: URL.self) {
+                handled = true
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in
+                        if let existing = store.items.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
+                            store.moveItems([existing], to: destination)
+                        } else {
+                            let temp = MediaItem(url: url, kind: MediaFormatRegistry.kind(for: url) ?? .video, fileSize: 0, modifiedDate: Date())
+                            store.moveItems([temp], to: destination)
+                        }
+                    }
+                }
+            }
+        }
+        return handled
     }
 
     private func commitNewCollection() {

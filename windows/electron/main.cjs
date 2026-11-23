@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, screen, powerSaveBlocker, protocol } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, screen, powerSaveBlocker, protocol, nativeImage } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
@@ -279,6 +279,84 @@ ipcMain.handle("fs:reveal", async (_e, filePath) => shell.showItemInFolder(fileP
 ipcMain.handle("fs:open-inbox", async () => shell.openPath(inboxDir()));
 ipcMain.handle("fs:read-text", async (_e, filePath) => {
   try { return fs.readFileSync(filePath, "utf8"); } catch { return null; }
+});
+
+function uniqueDestPath(destDir, filename) {
+  const base = path.join(destDir, filename);
+  if (!fs.existsSync(base)) return base;
+  const parsed = path.parse(filename);
+  let i = 2;
+  while (true) {
+    const cand = path.join(destDir, `${parsed.name} ${i}${parsed.ext}`);
+    if (!fs.existsSync(cand)) return cand;
+    i += 1;
+  }
+}
+
+ipcMain.handle("fs:rename", async (_e, filePath, newName) => {
+  try {
+    const clean = String(newName || "").trim().replace(/[/:\\?%*|"<>\r\n]/g, "-");
+    if (!clean) return { ok: false, error: "Invalid name" };
+    const parsed = path.parse(filePath);
+    const hasExt = path.extname(clean).length > 0;
+    const finalName = hasExt ? clean : `${clean}${parsed.ext}`;
+    const dest = path.join(parsed.dir, finalName);
+    if (dest !== filePath) fs.renameSync(filePath, dest);
+    return { ok: true, newPath: dest, newName: finalName };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle("fs:trash", async (_e, paths) => {
+  const trashed = [];
+  for (const p of paths || []) {
+    try { await shell.trashItem(p); trashed.push(p); } catch {}
+  }
+  return { ok: true, trashed };
+});
+
+ipcMain.handle("fs:duplicate", async (_e, paths) => {
+  const created = [];
+  for (const p of paths || []) {
+    try {
+      const parsed = path.parse(p);
+      const dest = uniqueDestPath(parsed.dir, `${parsed.name} copy${parsed.ext}`);
+      fs.copyFileSync(p, dest);
+      created.push(dest);
+    } catch {}
+  }
+  return { ok: true, created };
+});
+
+ipcMain.handle("fs:transfer", async (_e, paths, destDir, mode) => {
+  let targetDir = destDir;
+  if (!targetDir) {
+    const pick = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
+    if (pick.canceled || !pick.filePaths[0]) return { ok: false, canceled: true, moved: [] };
+    targetDir = pick.filePaths[0];
+  }
+  const transferred = [];
+  for (const p of paths || []) {
+    try {
+      if (mode === "move" && path.dirname(p) === targetDir) continue;
+      const dest = uniqueDestPath(targetDir, path.basename(p));
+      if (mode === "move") {
+        try { fs.renameSync(p, dest); } catch { fs.copyFileSync(p, dest); fs.unlinkSync(p); }
+      } else {
+        fs.copyFileSync(p, dest);
+      }
+      transferred.push({ from: p, to: dest });
+    } catch {}
+  }
+  return { ok: true, destDir: targetDir, transferred };
+});
+
+ipcMain.on("fs:start-drag", (event, filePath) => {
+  try {
+    const icon = nativeImage.createEmpty();
+    event.sender.startDrag({ file: filePath, icon });
+  } catch {}
 });
 
 ipcMain.handle("state:load", async (_e, key) => {

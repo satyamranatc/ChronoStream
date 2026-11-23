@@ -17,6 +17,7 @@ import PDFReaderView from "./components/PDFReaderView";
 import { PhotoViewerView, PhotoStudioView, VideoStudioView } from "./components/MediaViewers";
 import DisplaysPopover from "./components/DisplaysPopover";
 import SettingsModal from "./components/SettingsModal";
+import { SplashScreen, WelcomeSlidesModal } from "./components/SplashAndWelcome";
 
 const SMART_ITEMS: { id: SmartSection; label: string; Icon: React.ElementType }[] = [
   { id: "all", label: "All Media", Icon: LayoutGrid },
@@ -40,6 +41,15 @@ export default function App() {
   const [folders, setFolders] = useState<string[]>([]);
   const [items, setItems] = useState<MediaItem[]>([]);
   const [activeItem, setActiveItem] = useState<MediaItem | null>(null);
+  const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectMode, setSelectMode] = useState(false);
+  const [clipboard, setClipboard] = useState<{ paths: string[]; mode: "copy" | "move" } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: MediaItem } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<MediaItem | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [fileToast, setFileToast] = useState<string | null>(null);
   const [shareSeedItems, setShareSeedItems] = useState<MediaItem[]>([]);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -50,9 +60,16 @@ export default function App() {
   const [cinemaActive, setCinemaActive] = useState(false);
   const [showDisplays, setShowDisplays] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [showConnectPrompt, setShowConnectPrompt] = useState(false);
+  const foldersLoadedRef = useRef(false);
+  const hasFoldersRef = useRef(false);
 
   const isVideoPlayingRef = useRef(false);
   const isAudioPlayingRef = useRef(false);
+  const explorerScrollRef = useRef<HTMLDivElement | null>(null);
+  const savedScrollTopRef = useRef<number>(0);
 
   // Apply Pure Light / Dark theme class
   useEffect(() => {
@@ -83,7 +100,9 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const savedFolders = await window.chronoAPI?.loadState<string[]>("folders");
+      foldersLoadedRef.current = true;
       if (savedFolders?.length) {
+        hasFoldersRef.current = true;
         setFolders(savedFolders);
         const all: MediaItem[] = [];
         for (const f of savedFolders) {
@@ -210,9 +229,190 @@ export default function App() {
   }, [items, selection, searchQuery, duplicateIds]);
 
   const openItem = (item: MediaItem) => {
+    if (explorerScrollRef.current) {
+      savedScrollTopRef.current = explorerScrollRef.current.scrollTop;
+    }
+    setLastOpenedId(item.id);
     setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, lastOpened: Date.now() } : x));
     setActiveItem(item);
   };
+
+  // Restore exact explorer scroll position when returning from a video/viewer
+  useEffect(() => {
+    if (!activeItem && explorerScrollRef.current && savedScrollTopRef.current > 0) {
+      const targetTop = savedScrollTopRef.current;
+      requestAnimationFrame(() => {
+        if (explorerScrollRef.current) {
+          explorerScrollRef.current.scrollTop = targetTop;
+        }
+      });
+    }
+  }, [activeItem, viewMode]);
+
+  const flashFileToast = (msg: string) => {
+    setFileToast(msg);
+    window.setTimeout(() => setFileToast((cur) => (cur === msg ? null : cur)), 2200);
+  };
+
+  const rescanFolders = async () => {
+    const all: MediaItem[] = [];
+    for (const f of folders) {
+      const found = await window.chronoAPI?.scanFolder(f);
+      if (found) all.push(...found);
+    }
+    setItems(all);
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const targetsForItem = (item: MediaItem): MediaItem[] => {
+    if (selectedIds.has(item.id) && selectedIds.size > 1) {
+      return filteredItems.filter((x) => selectedIds.has(x.id));
+    }
+    return [item];
+  };
+
+  const handleCardClick = (e: React.MouseEvent, item: MediaItem) => {
+    if (e.shiftKey && focusedId) {
+      const a = filteredItems.findIndex((x) => x.id === focusedId);
+      const b = filteredItems.findIndex((x) => x.id === item.id);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSelectedIds(new Set(filteredItems.slice(lo, hi + 1).map((x) => x.id)));
+        setFocusedId(item.id);
+        return;
+      }
+    }
+    if (selectMode || e.ctrlKey || e.metaKey) {
+      toggleSelect(item.id);
+      setFocusedId(item.id);
+    } else {
+      // Single click selects (Explorer-style); double-click or Enter plays
+      setSelectedIds(new Set([item.id]));
+      setFocusedId(item.id);
+    }
+  };
+
+  // Arrow-key navigation, Enter to play, Esc to clear, Ctrl+C/X/V/A/Delete in explorer
+  useEffect(() => {
+    if (activeItem || renameTarget || showSettings) return;
+    if (selection.type !== "smart" && selection.type !== "folder" && selection.type !== "collection") return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) return;
+      if (!filteredItems.length) return;
+
+      const mod = e.ctrlKey || e.metaKey;
+      const sel = filteredItems.filter((x) => selectedIds.has(x.id));
+      if (mod) {
+        if (e.key.toLowerCase() === "a") { e.preventDefault(); setSelectedIds(new Set(filteredItems.map((x) => x.id))); return; }
+        if (e.key.toLowerCase() === "c" && sel.length) { e.preventDefault(); handleCopyCut(sel, "copy"); return; }
+        if (e.key.toLowerCase() === "x" && sel.length) { e.preventDefault(); handleCopyCut(sel, "move"); return; }
+        if (e.key.toLowerCase() === "v" && clipboard) { e.preventDefault(); handlePaste(); return; }
+        return;
+      }
+
+      const curId = focusedId || Array.from(selectedIds)[0] || lastOpenedId;
+      const curIdx = curId ? filteredItems.findIndex((x) => x.id === curId) : -1;
+      const w = explorerScrollRef.current?.clientWidth || 1000;
+      const cols = viewMode === "grid" ? (w >= 1280 ? 5 : w >= 1024 ? 4 : w >= 640 ? 3 : 2) : 1;
+
+      const moveBy = (delta: number) => {
+        e.preventDefault();
+        const nextIdx = curIdx === -1 ? 0 : Math.max(0, Math.min(filteredItems.length - 1, curIdx + delta));
+        const target = filteredItems[nextIdx];
+        setFocusedId(target.id);
+        setSelectedIds(new Set([target.id]));
+        const el = explorerScrollRef.current?.querySelector(`[data-item-id="${CSS.escape(target.id)}"]`);
+        el?.scrollIntoView({ block: "nearest" });
+      };
+
+      if (e.key === "ArrowLeft") moveBy(-1);
+      else if (e.key === "ArrowRight") moveBy(1);
+      else if (e.key === "ArrowUp") moveBy(-cols);
+      else if (e.key === "ArrowDown") moveBy(cols);
+      else if (e.key === "Enter" && curIdx !== -1) { e.preventDefault(); openItem(filteredItems[curIdx]); }
+      else if (e.key === "Delete" && sel.length) { e.preventDefault(); handleTrash(sel); }
+      else if (e.key === "Escape") { setSelectedIds(new Set()); setSelectMode(false); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeItem, renameTarget, showSettings, selection, filteredItems, focusedId, selectedIds, lastOpenedId, viewMode, clipboard]);
+
+  const handleCopyCut = (targets: MediaItem[], mode: "copy" | "move") => {
+    setClipboard({ paths: targets.map((t) => t.path), mode });
+    flashFileToast(`${mode === "move" ? "Cut" : "Copied"} ${targets.length} item${targets.length === 1 ? "" : "s"}`);
+  };
+
+  const handlePaste = async (destDir: string | null = null) => {
+    if (!clipboard?.paths.length || !window.chronoAPI) return;
+    const target = destDir || (selection.type === "folder" ? selection.folderPath : null);
+    const res = await window.chronoAPI.transferFiles(clipboard.paths, target, clipboard.mode);
+    if (res.ok && !res.canceled) {
+      if (clipboard.mode === "move") setClipboard(null);
+      await rescanFolders();
+      flashFileToast(`${clipboard.mode === "move" ? "Moved" : "Pasted"} ${res.transferred?.length || 0} item(s)`);
+    }
+  };
+
+  const handleMove = async (targets: MediaItem[]) => {
+    if (!targets.length || !window.chronoAPI) return;
+    const res = await window.chronoAPI.transferFiles(targets.map((t) => t.path), null, "move");
+    if (res.ok && !res.canceled) {
+      setSelectedIds(new Set());
+      await rescanFolders();
+      flashFileToast(`Moved ${res.transferred?.length || 0} item(s)`);
+    }
+  };
+
+  const handleDuplicate = async (targets: MediaItem[]) => {
+    if (!targets.length || !window.chronoAPI) return;
+    const res = await window.chronoAPI.duplicateFiles(targets.map((t) => t.path));
+    if (res.ok) {
+      await rescanFolders();
+      flashFileToast(`Duplicated ${res.created.length} item(s)`);
+    }
+  };
+
+  const handleTrash = async (targets: MediaItem[]) => {
+    if (!targets.length || !window.chronoAPI) return;
+    const res = await window.chronoAPI.trashFiles(targets.map((t) => t.path));
+    if (res.ok) {
+      const removed = new Set(res.trashed);
+      setItems((prev) => prev.filter((x) => !removed.has(x.path)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        targets.forEach((t) => next.delete(t.id));
+        return next;
+      });
+      flashFileToast(`Moved ${res.trashed.length} item(s) to Recycle Bin`);
+    }
+  };
+
+  const commitRename = async () => {
+    if (!renameTarget || !window.chronoAPI) return;
+    const res = await window.chronoAPI.renameFile(renameTarget.path, renameDraft);
+    if (res.ok && res.newPath && res.newName) {
+      setItems((prev) => prev.map((x) => x.id === renameTarget.id ? { ...x, id: res.newPath!, path: res.newPath!, name: res.newName! } : x));
+      if (lastOpenedId === renameTarget.id) setLastOpenedId(res.newPath);
+      flashFileToast(`Renamed to ${res.newName}`);
+      setRenameTarget(null);
+    }
+  };
+
+  // Close right-click menu on outside click
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [contextMenu]);
 
   const shareItem = (item: MediaItem) => {
     setShareSeedItems([item]);
@@ -344,9 +544,9 @@ export default function App() {
 
               {/* Folders */}
               <div className="space-y-0.5">
-                <div className="flex items-center justify-between px-2.5 pb-1">
+                <div className="flex items-center gap-1.5 px-2.5 pb-1">
                   <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--cs-text-tertiary)" }}>Folders</span>
-                  <button onClick={addFolder} className="flex h-5 w-5 items-center justify-center rounded-full hover:bg-black/10 cursor-pointer"><Plus size={12} /></button>
+                  <button onClick={addFolder} className="flex h-4 w-4 items-center justify-center rounded-full hover:bg-teal-600 hover:text-white cursor-pointer" style={{ background: "var(--cs-surface-subtle)" }} title="Add Folder"><Plus size={11} /></button>
                 </div>
                 {folders.length === 0 ? (
                   <div className="px-2.5 text-xs" style={{ color: "var(--cs-text-tertiary)" }}>No folders added</div>
@@ -444,6 +644,21 @@ export default function App() {
                 </div>
 
                 <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={() => { setSelectMode((s) => !s); if (selectMode) setSelectedIds(new Set()); }}
+                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium cursor-pointer ${selectMode ? "border-teal-600 bg-teal-600 text-white" : ""}`}
+                    style={selectMode ? undefined : { borderColor: "var(--cs-border)", background: "var(--cs-canvas)" }}
+                  >
+                    {selectMode ? "Done Selecting" : "Select"}
+                  </button>
+                  {clipboard && (
+                    <button
+                      onClick={() => handlePaste()}
+                      className="rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-medium text-white cursor-pointer"
+                    >
+                      Paste ({clipboard.paths.length})
+                    </button>
+                  )}
                   <div className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs" style={{ borderColor: "var(--cs-border)", background: "var(--cs-canvas)" }}>
                     <Search size={13} style={{ color: "var(--cs-text-tertiary)" }} />
                     <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search media…" className="w-44 bg-transparent outline-none" />
@@ -455,6 +670,29 @@ export default function App() {
                 </div>
               </div>
 
+              {(selectMode || selectedIds.size > 1) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-2 text-xs" style={{ borderColor: "var(--cs-border)", background: "var(--cs-accent-soft)" }}>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold">{selectedIds.size > 0 ? `${selectedIds.size} selected` : "Click or Ctrl+Click items to select"}</span>
+                    <button onClick={() => setSelectedIds(new Set(filteredItems.map((i) => i.id)))} className="rounded bg-white/70 px-2 py-0.5 font-medium cursor-pointer dark:bg-black/30">Select All</button>
+                    {selectedIds.size > 0 && <button onClick={() => setSelectedIds(new Set())} className="rounded bg-white/70 px-2 py-0.5 cursor-pointer dark:bg-black/30">Clear</button>}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {(() => {
+                      const sel = filteredItems.filter((i) => selectedIds.has(i.id));
+                      return (
+                        <>
+                          <button disabled={!sel.length} onClick={() => handleCopyCut(sel, "move")} className="rounded bg-white/80 px-2 py-1 font-medium disabled:opacity-40 cursor-pointer dark:bg-black/30">Cut</button>
+                          <button disabled={!sel.length} onClick={() => handleCopyCut(sel, "copy")} className="rounded bg-white/80 px-2 py-1 font-medium disabled:opacity-40 cursor-pointer dark:bg-black/30">Copy</button>
+                          <button disabled={!sel.length} onClick={() => handleMove(sel)} className="rounded bg-white/80 px-2 py-1 font-medium disabled:opacity-40 cursor-pointer dark:bg-black/30">Move…</button>
+                          <button disabled={!sel.length} onClick={() => handleTrash(sel)} className="rounded bg-red-600 px-2 py-1 font-medium text-white disabled:opacity-40 cursor-pointer">Delete</button>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
               {filteredItems.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center p-8 text-center space-y-3">
                   <FolderPlus size={40} style={{ color: "var(--cs-text-tertiary)" }} />
@@ -463,66 +701,224 @@ export default function App() {
                   <button onClick={addFolder} className="rounded-lg px-4 py-2 text-xs font-semibold text-white cursor-pointer" style={{ background: "var(--cs-accent)" }}>Open Folder…</button>
                 </div>
               ) : viewMode === "grid" ? (
-                <div className="flex-1 overflow-y-auto p-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 auto-rows-max">
-                  {filteredItems.map((item) => (
-                    <div
-                      key={item.id}
-                      onDoubleClick={() => openItem(item)}
-                      onClick={() => openItem(item)}
-                      className="cs-card group rounded-2xl p-3 cursor-pointer transition hover:-translate-y-0.5 space-y-2"
-                    >
-                      <div className="flex h-28 items-center justify-center overflow-hidden rounded-xl" style={{ background: "var(--cs-surface-subtle)" }}>
-                        {item.kind === "image" && window.chronoAPI ? (
-                          <img src={window.chronoAPI.mediaUrl(item.path)} alt={item.name} loading="lazy" className="h-full w-full object-cover" />
-                        ) : item.kind === "video" ? (
-                          <Film size={28} style={{ color: "var(--cs-accent)" }} />
-                        ) : item.kind === "audio" ? (
-                          <Music size={28} className="text-blue-600" />
-                        ) : (
-                          <FileText size={28} className="text-orange-500" />
-                        )}
-                      </div>
-                      <div className="flex items-start justify-between gap-1">
-                        <div className="min-w-0">
-                          <div className="truncate text-xs font-semibold">{item.name}</div>
-                          <div className="text-[11px]" style={{ color: "var(--cs-text-tertiary)" }}>{item.ext} · {formatBytes(item.fileSize)}</div>
+                <div ref={explorerScrollRef} className="flex-1 overflow-y-auto p-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 auto-rows-max">
+                  {filteredItems.map((item) => {
+                    const isLastPlayed = item.id === lastOpenedId;
+                    const isSelected = selectedIds.has(item.id);
+                    return (
+                      <div
+                        key={item.id}
+                        data-item-id={item.id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.preventDefault();
+                          window.chronoAPI?.startFileDrag(item.path);
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setContextMenu({ x: e.clientX, y: e.clientY, item });
+                        }}
+                        onDoubleClick={() => openItem(item)}
+                        onClick={(e) => handleCardClick(e, item)}
+                        className={`cs-card group rounded-2xl p-3 cursor-pointer transition hover:-translate-y-0.5 space-y-2 ${isSelected ? "ring-2 ring-teal-700 shadow-md" : isLastPlayed ? "ring-2 ring-teal-500 shadow-md" : ""}`}
+                        style={isSelected || isLastPlayed ? { background: "var(--cs-accent-soft)" } : undefined}
+                      >
+                        <div className="relative flex h-28 items-center justify-center overflow-hidden rounded-xl" style={{ background: "var(--cs-surface-subtle)" }}>
+                          {item.kind === "image" && window.chronoAPI ? (
+                            <img src={window.chronoAPI.mediaUrl(item.path)} alt={item.name} loading="lazy" className="h-full w-full object-cover" />
+                          ) : item.kind === "video" ? (
+                            <Film size={28} style={{ color: "var(--cs-accent)" }} />
+                          ) : item.kind === "audio" ? (
+                            <Music size={28} style={{ color: "var(--cs-accent)" }} />
+                          ) : (
+                            <FileText size={28} style={{ color: "var(--cs-accent)" }} />
+                          )}
+                          {isLastPlayed && (
+                            <span className="absolute left-2 top-2 rounded-full bg-teal-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow">
+                              Last Played
+                            </span>
+                          )}
+                          {(selectMode || isSelected) && (
+                            <span className={`absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${isSelected ? "bg-teal-700 text-white" : "bg-black/35 text-white"}`}>
+                              {isSelected ? "✓" : ""}
+                            </span>
+                          )}
                         </div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); shareItem(item); }}
-                          className="opacity-0 group-hover:opacity-75 hover:!opacity-100 p-1 cursor-pointer"
-                          title="Share via Wi-Fi QR"
-                        >
-                          <Share2 size={13} />
-                        </button>
+                        <div className="flex items-start justify-between gap-1">
+                          <div className="min-w-0">
+                            <div className={`truncate text-xs font-semibold ${isSelected || isLastPlayed ? "text-teal-700 dark:text-teal-300" : ""}`}>{item.name}</div>
+                            <div className="text-[11px]" style={{ color: "var(--cs-text-tertiary)" }}>{item.ext} · {formatBytes(item.fileSize)}</div>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); shareItem(item); }}
+                            className="opacity-0 group-hover:opacity-75 hover:!opacity-100 p-1 cursor-pointer"
+                            title="Share via Wi-Fi QR"
+                          >
+                            <Share2 size={13} />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
-                <div className="flex-1 overflow-y-auto p-3 space-y-1">
-                  {filteredItems.map((item) => (
-                    <div
-                      key={item.id}
-                      onClick={() => openItem(item)}
-                      className="flex items-center justify-between rounded-xl px-3 py-2 hover:bg-black/5 cursor-pointer text-xs"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        {item.kind === "video" ? <Film size={15} style={{ color: "var(--cs-accent)" }} /> : item.kind === "audio" ? <Music size={15} className="text-blue-600" /> : item.kind === "pdf" ? <FileText size={15} className="text-orange-500" /> : <ImageIcon size={15} className="text-indigo-500" />}
-                        <span className="truncate font-medium">{item.name}</span>
+                <div ref={explorerScrollRef} className="flex-1 overflow-y-auto p-3 space-y-1">
+                  {filteredItems.map((item) => {
+                    const isLastPlayed = item.id === lastOpenedId;
+                    const isSelected = selectedIds.has(item.id);
+                    return (
+                      <div
+                        key={item.id}
+                        data-item-id={item.id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.preventDefault();
+                          window.chronoAPI?.startFileDrag(item.path);
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setContextMenu({ x: e.clientX, y: e.clientY, item });
+                        }}
+                        onClick={(e) => handleCardClick(e, item)}
+                        onDoubleClick={() => openItem(item)}
+                        className={`flex items-center justify-between rounded-xl px-3 py-2 hover:bg-black/5 cursor-pointer text-xs ${isSelected ? "ring-1 ring-teal-700" : isLastPlayed ? "ring-1 ring-teal-500" : ""}`}
+                        style={isSelected || isLastPlayed ? { background: "var(--cs-accent-soft)" } : undefined}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {item.kind === "video" ? <Film size={15} style={{ color: "var(--cs-accent)" }} /> : item.kind === "audio" ? <Music size={15} style={{ color: "var(--cs-accent)" }} /> : item.kind === "pdf" ? <FileText size={15} style={{ color: "var(--cs-accent)" }} /> : <ImageIcon size={15} style={{ color: "var(--cs-accent)" }} />}
+                          <span className={`truncate font-medium ${isLastPlayed ? "font-semibold text-teal-700 dark:text-teal-300" : ""}`}>{item.name}</span>
+                          {isLastPlayed && (
+                            <span className="shrink-0 rounded-full bg-teal-600 px-2 py-0.5 text-[10px] font-semibold text-white">Last Played</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4 shrink-0" style={{ color: "var(--cs-text-secondary)" }}>
+                          <span className="font-mono text-[11px]">{item.ext}</span>
+                          <span className="w-16 text-right tabular-nums">{formatBytes(item.fileSize)}</span>
+                          <button onClick={(e) => { e.stopPropagation(); shareItem(item); }} className="cursor-pointer opacity-70 hover:opacity-100"><Share2 size={13} /></button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-4 shrink-0" style={{ color: "var(--cs-text-secondary)" }}>
-                        <span className="font-mono text-[11px]">{item.ext}</span>
-                        <span className="w-16 text-right tabular-nums">{formatBytes(item.fileSize)}</span>
-                        <button onClick={(e) => { e.stopPropagation(); shareItem(item); }} className="cursor-pointer opacity-70 hover:opacity-100"><Share2 size={13} /></button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
           )}
         </main>
       </div>
+
+      {contextMenu && (
+        <div
+          className="fixed z-50 w-52 rounded-xl border py-1.5 text-xs shadow-xl"
+          style={{ left: Math.min(contextMenu.x, window.innerWidth - 220), top: Math.min(contextMenu.y, window.innerHeight - 320), borderColor: "var(--cs-border)", background: "var(--cs-surface)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(() => {
+            const targets = targetsForItem(contextMenu.item);
+            const suf = targets.length > 1 ? ` (${targets.length})` : "";
+            const run = (fn: () => void) => { setContextMenu(null); fn(); };
+            return (
+              <>
+                <button onClick={() => run(() => openItem(contextMenu.item))} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">Open</button>
+                <button onClick={() => run(() => toggleSelect(contextMenu.item.id))} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">{selectedIds.has(contextMenu.item.id) ? "Deselect" : "Select"}</button>
+                <div className="my-1 border-t" style={{ borderColor: "var(--cs-border)" }} />
+                <button onClick={() => run(() => handleCopyCut(targets, "move"))} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">Cut{suf}</button>
+                <button onClick={() => run(() => handleCopyCut(targets, "copy"))} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">Copy{suf}</button>
+                {clipboard && <button onClick={() => run(() => handlePaste())} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">Paste Here</button>}
+                <button onClick={() => run(() => handleDuplicate(targets))} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">Duplicate{suf}</button>
+                {targets.length === 1 && (
+                  <button onClick={() => run(() => { setRenameDraft(contextMenu.item.name); setRenameTarget(contextMenu.item); })} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">Rename…</button>
+                )}
+                <button onClick={() => run(() => handleMove(targets))} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">Move to Folder…{suf}</button>
+                <div className="my-1 border-t" style={{ borderColor: "var(--cs-border)" }} />
+                <button onClick={() => run(() => shareItem(contextMenu.item))} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">Share via Wi-Fi QR</button>
+                <button onClick={() => run(() => window.chronoAPI?.revealInExplorer(contextMenu.item.path))} className="flex w-full px-3 py-1.5 text-left hover:bg-black/5 cursor-pointer">Reveal in Explorer</button>
+                <div className="my-1 border-t" style={{ borderColor: "var(--cs-border)" }} />
+                <button onClick={() => run(() => handleTrash(targets))} className="flex w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-500/10 cursor-pointer">Move to Recycle Bin{suf}</button>
+              </>
+            );
+          })()}
+        </div>
+      )}
+
+      {renameTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl border p-5 shadow-2xl space-y-4" style={{ borderColor: "var(--cs-border)", background: "var(--cs-surface)" }}>
+            <div className="text-sm font-bold">Rename File</div>
+            <input
+              autoFocus
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setRenameTarget(null); }}
+              className="w-full rounded-lg border px-3 py-2 text-xs outline-none"
+              style={{ borderColor: "var(--cs-border)", background: "var(--cs-canvas)" }}
+            />
+            <div className="flex justify-end gap-2 text-xs">
+              <button onClick={() => setRenameTarget(null)} className="rounded-lg border px-3 py-1.5 cursor-pointer" style={{ borderColor: "var(--cs-border)" }}>Cancel</button>
+              <button onClick={commitRename} className="rounded-lg bg-teal-600 px-3 py-1.5 font-semibold text-white cursor-pointer">Rename</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {fileToast && (
+        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full border border-teal-500/40 bg-black/80 px-4 py-2 text-xs font-medium text-white shadow-lg">
+          {fileToast}
+        </div>
+      )}
+
+      {showSplash && (
+        <SplashScreen
+          onFinished={() => {
+            setShowSplash(false);
+            if (localStorage.getItem("cs_onboarding_v2") !== "1") {
+              setShowWelcome(true);
+            } else if (!hasFoldersRef.current && folders.length === 0) {
+              setShowConnectPrompt(true);
+            }
+          }}
+        />
+      )}
+
+      {showWelcome && (
+        <WelcomeSlidesModal
+          onAddFolder={() => {
+            localStorage.setItem("cs_onboarding_v2", "1");
+            setShowWelcome(false);
+            addFolder();
+          }}
+          onStart={() => {
+            localStorage.setItem("cs_onboarding_v2", "1");
+            setShowWelcome(false);
+            if (!hasFoldersRef.current && folders.length === 0) {
+              setShowConnectPrompt(true);
+            }
+          }}
+        />
+      )}
+
+      {showConnectPrompt && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border p-6 text-center shadow-2xl space-y-4" style={{ background: "var(--cs-surface)", borderColor: "var(--cs-border)" }}>
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-teal-600/15 text-teal-600">
+              <FolderPlus size={26} />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold">Connect a Media Folder</h3>
+              <p className="text-xs leading-relaxed" style={{ color: "var(--cs-text-secondary)" }}>
+                Hey! Connect any folder with your videos, music, photos, or PDFs so ChronoStream can show your library right away.
+              </p>
+            </div>
+            <div className="flex justify-center gap-2.5 pt-1 text-xs">
+              <button onClick={() => setShowConnectPrompt(false)} className="rounded-lg border px-4 py-2 font-medium cursor-pointer" style={{ borderColor: "var(--cs-border)" }}>
+                Not Now
+              </button>
+              <button onClick={() => { setShowConnectPrompt(false); addFolder(); }} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 font-semibold text-white cursor-pointer">
+                <FolderPlus size={14} /> Connect Folder…
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSettings && (
         <SettingsModal

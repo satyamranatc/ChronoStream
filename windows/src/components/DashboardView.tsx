@@ -99,12 +99,12 @@ export default function DashboardView({
   const allVideo = Object.values(usageRecords).reduce((a, r) => a + r.videoWatchedSeconds, 0);
   const allAudio = Object.values(usageRecords).reduce((a, r) => a + r.audioListenedSeconds, 0);
 
-  const browseMins = Math.max(0.01, (weekApp - weekVideo - weekAudio) / 60);
+  const browseMins = Math.max(0, (weekApp - weekVideo - weekAudio) / 60);
   const donutData = [
-    { name: "Video Watched", value: Math.max(0.01, weekVideo / 60), color: "#2563EB" },
-    { name: "Audio Listened", value: Math.max(0.01, weekAudio / 60), color: "#6366F1" },
-    { name: "Library & Studio", value: browseMins, color: "#008080" }
-  ];
+    { name: "Video Watched", value: weekVideo / 60, color: "#008080" },
+    { name: "Audio Listened", value: weekAudio / 60, color: "#339999" },
+    { name: "Library & Studio", value: browseMins, color: "#A3D2D2" }
+  ].filter((d) => d.value > 0);
 
   const totalBytes = items.reduce((s, i) => s + i.fileSize, 0);
   const byKind = (k: MediaItem["kind"]) => items.filter((i) => i.kind === k);
@@ -187,8 +187,8 @@ export default function DashboardView({
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {[
               { title: "Time in ChronoStream", today: formatHoursMinutes(todayRec.appSeconds), week: formatHoursMinutes(weekApp), all: formatHoursMinutes(allApp), color: "#008080", Icon: Clock },
-              { title: "Video Watched", today: formatHoursMinutes(todayRec.videoWatchedSeconds), week: formatHoursMinutes(weekVideo), all: formatHoursMinutes(allVideo), color: "#2563EB", Icon: Film },
-              { title: "Audio Listened", today: formatHoursMinutes(todayRec.audioListenedSeconds), week: formatHoursMinutes(weekAudio), all: formatHoursMinutes(allAudio), color: "#6366F1", Icon: Music }
+              { title: "Video Watched", today: formatHoursMinutes(todayRec.videoWatchedSeconds), week: formatHoursMinutes(weekVideo), all: formatHoursMinutes(allVideo), color: "#006666", Icon: Film },
+              { title: "Audio Listened", today: formatHoursMinutes(todayRec.audioListenedSeconds), week: formatHoursMinutes(weekAudio), all: formatHoursMinutes(allAudio), color: "#339999", Icon: Music }
             ].map((k) => (
               <div key={k.title} className="cs-card rounded-2xl p-4 space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -215,8 +215,8 @@ export default function DashboardView({
                   <p className="text-xs" style={{ color: "var(--cs-text-secondary)" }}>Minutes spent in app vs. video watched</p>
                 </div>
                 <div className="flex gap-3 text-xs" style={{ color: "var(--cs-text-secondary)" }}>
-                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-teal-600" /> In App</span>
-                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-blue-600" /> Watched</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: "#A3D2D2" }} /> In App</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: "#008080" }} /> Watched</span>
                 </div>
               </div>
               <div className="h-48 w-full">
@@ -225,8 +225,8 @@ export default function DashboardView({
                     <XAxis dataKey="day" tick={{ fontSize: 11 }} stroke="var(--cs-text-tertiary)" axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 11 }} stroke="var(--cs-text-tertiary)" axisLine={false} tickLine={false} unit="m" />
                     <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid var(--cs-border)", background: "var(--cs-surface)", fontSize: 12 }} />
-                    <Bar dataKey="inApp" name="In App (min)" fill="#00808055" radius={[6, 6, 0, 0]} />
-                    <Bar dataKey="watched" name="Watched (min)" fill="#2563EB" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="inApp" name="In App (min)" fill="#A3D2D2" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="watched" name="Watched (min)" fill="#008080" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -237,15 +237,21 @@ export default function DashboardView({
                 <h3 className="text-sm font-semibold">Time Breakdown</h3>
                 <p className="text-xs" style={{ color: "var(--cs-text-secondary)" }}>Last 7 days ({formatHoursMinutes(weekApp)} total)</p>
               </div>
-              <div className="h-40 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={donutData} dataKey="value" innerRadius={42} outerRadius={62} paddingAngle={3}>
-                      {donutData.map((d) => <Cell key={d.name} fill={d.color} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid var(--cs-border)", background: "var(--cs-surface)", fontSize: 12 }} />
-                  </PieChart>
-                </ResponsiveContainer>
+              <div className="h-40 w-full flex items-center justify-center">
+                {donutData.length === 0 ? (
+                  <div className="flex h-28 w-28 items-center justify-center rounded-full border-[14px] text-xs font-medium" style={{ borderColor: "var(--cs-surface-subtle)", color: "var(--cs-text-tertiary)" }}>
+                    0m
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={donutData} dataKey="value" innerRadius={42} outerRadius={62} paddingAngle={donutData.length > 1 ? 3 : 0}>
+                        {donutData.map((d) => <Cell key={d.name} fill={d.color} />)}
+                      </Pie>
+                      <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid var(--cs-border)", background: "var(--cs-surface)", fontSize: 12 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
               </div>
               <div className="space-y-1 text-xs">
                 {donutData.map((d) => (
@@ -264,9 +270,9 @@ export default function DashboardView({
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             {[
               { title: "Videos", count: byKind("video").length, size: bytesKind("video"), color: "#008080", Icon: Film, smart: "videos" as const },
-              { title: "Music & Audio", count: byKind("audio").length, size: bytesKind("audio"), color: "#2563EB", Icon: Music, smart: "audio" as const },
-              { title: "Photos", count: byKind("image").length, size: bytesKind("image"), color: "#6366F1", Icon: ImageIcon, smart: "photos" as const },
-              { title: "PDF Documents", count: byKind("pdf").length, size: bytesKind("pdf"), color: "#EA580C", Icon: FileText, smart: "documents" as const }
+              { title: "Music & Audio", count: byKind("audio").length, size: bytesKind("audio"), color: "#006666", Icon: Music, smart: "audio" as const },
+              { title: "Photos", count: byKind("image").length, size: bytesKind("image"), color: "#339999", Icon: ImageIcon, smart: "photos" as const },
+              { title: "PDF Documents", count: byKind("pdf").length, size: bytesKind("pdf"), color: "#66B2B2", Icon: FileText, smart: "documents" as const }
             ].map((c) => (
               <button
                 key={c.title}

@@ -188,4 +188,9 @@ public final class UsageStatsStore {
         guard let data = try? JSONEncoder().encode(records) else { return }
         try? data.write(to: Self.storageURL, options: .atomic)
     }
+
+    public func resetAll() {
+        records = [:]
+        try? FileManager.default.removeItem(at: Self.storageURL)
+    }
 }

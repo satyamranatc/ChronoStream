@@ -132,6 +132,11 @@ declare global {
       revealInExplorer: (p: string) => Promise<void>;
       openInboxFolder: () => Promise<void>;
       readTextFile: (p: string) => Promise<string | null>;
+      renameFile: (p: string, newName: string) => Promise<{ ok: boolean; newPath?: string; newName?: string; error?: string }>;
+      trashFiles: (paths: string[]) => Promise<{ ok: boolean; trashed: string[] }>;
+      duplicateFiles: (paths: string[]) => Promise<{ ok: boolean; created: string[] }>;
+      transferFiles: (paths: string[], destDir: string | null, mode: "copy" | "move") => Promise<{ ok: boolean; canceled?: boolean; destDir?: string; transferred?: { from: string; to: string }[] }>;
+      startFileDrag: (p: string) => void;
       loadState: <T>(key: string) => Promise<T | null>;
       saveState: (key: string, value: unknown) => Promise<boolean>;
       prepareVideoPlayback: (p: string) => Promise<{ path: string; remuxed: boolean; error?: string }>;

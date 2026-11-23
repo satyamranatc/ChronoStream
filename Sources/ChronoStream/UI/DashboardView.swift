@@ -174,8 +174,8 @@ private struct AmbientWaveCanvas: View {
                     path.addLine(to: CGPoint(x: size.width, y: size.height))
                     path.closeSubpath()
 
-                    let opacity = 0.09 - Double(layer) * 0.02
-                    ctx.fill(path, with: .color(Color.accentColor.opacity(opacity)))
+                    let opacity = 0.08 - Double(layer) * 0.02
+                    ctx.fill(path, with: .color(Color(red: 0.0, green: 0.502, blue: 0.502).opacity(opacity)))
                 }
             }
         }
@@ -253,9 +253,20 @@ public struct DashboardView: View {
                     Spacer()
 
                     if activeTab == .stats {
-                        Text("Recorded locally · 100% private")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                        HStack(spacing: 10) {
+                            Text("Recorded locally · 100% private")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                            if usage.allTimeAppSeconds > 0 {
+                                Button("Reset") {
+                                    usage.resetAll()
+                                }
+                                .buttonStyle(.plain)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .help("Clear all locally recorded activity stats")
+                            }
+                        }
                     } else {
                         Text("Live Feed")
                             .font(.caption2)
@@ -390,6 +401,12 @@ public struct DashboardView: View {
 
     // MARK: - Usage & Watch-Time KPIs + Native Apple Charts
 
+    private let brandTeal = Color(red: 0.0, green: 0.502, blue: 0.502)
+    private let deepTeal = Color(red: 0.0, green: 0.400, blue: 0.400)
+    private let midTeal = Color(red: 0.20, green: 0.62, blue: 0.62)
+    private let softTeal = Color(red: 0.40, green: 0.70, blue: 0.70)
+    private let mistTeal = Color(red: 0.65, green: 0.83, blue: 0.83)
+
     private var watchTimeKPIRow: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 14)], spacing: 14) {
             usageKPICard(
@@ -398,7 +415,7 @@ public struct DashboardView: View {
                 weekValue: UsageStatsStore.formatHoursMinutes(usage.weekAppSeconds),
                 allTimeValue: UsageStatsStore.formatHoursMinutes(usage.allTimeAppSeconds),
                 symbol: "clock.fill",
-                tint: .teal
+                tint: brandTeal
             )
             usageKPICard(
                 title: "Video Watched",
@@ -406,7 +423,7 @@ public struct DashboardView: View {
                 weekValue: UsageStatsStore.formatHoursMinutes(usage.weekVideoSeconds),
                 allTimeValue: UsageStatsStore.formatHoursMinutes(usage.allTimeVideoSeconds),
                 symbol: "play.rectangle.fill",
-                tint: .blue
+                tint: deepTeal
             )
             usageKPICard(
                 title: "Audio Listened",
@@ -414,7 +431,7 @@ public struct DashboardView: View {
                 weekValue: UsageStatsStore.formatHoursMinutes(usage.weekAudioSeconds),
                 allTimeValue: UsageStatsStore.formatHoursMinutes(usage.allTimeAudioSeconds),
                 symbol: "headphones",
-                tint: .indigo
+                tint: midTeal
             )
         }
     }
@@ -464,9 +481,9 @@ public struct DashboardView: View {
         let totalWeekMins = max(0.01, videoMins + audioMins + browseMins)
 
         let slices: [(label: String, value: Double, color: Color)] = [
-            ("Video Watched", videoMins, .blue),
-            ("Audio Listened", audioMins, .indigo),
-            ("Library & Studio", browseMins, .teal)
+            ("Video Watched", videoMins, brandTeal),
+            ("Audio Listened", audioMins, midTeal),
+            ("Library & Studio", browseMins, mistTeal)
         ]
 
         return HStack(alignment: .top, spacing: 14) {
@@ -482,27 +499,28 @@ public struct DashboardView: View {
                     }
                     Spacer()
                     HStack(spacing: 12) {
-                        legendDot("In App", color: .teal)
-                        legendDot("Watched", color: .blue)
+                        legendDot("In App", color: mistTeal)
+                        legendDot("Watched", color: brandTeal)
                     }
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 }
 
                 Chart(points) { pt in
-                    BarMark(
-                        x: .value("Day", pt.dayLabel),
-                        y: .value("Minutes", max(0.2, pt.appMinutes))
-                    )
-                    .foregroundStyle(Color.teal.opacity(0.32))
-                    .cornerRadius(6)
-
+                    let nonWatchMins = max(0, pt.appMinutes - pt.videoMinutes)
                     BarMark(
                         x: .value("Day", pt.dayLabel),
                         y: .value("Minutes", pt.videoMinutes)
                     )
-                    .foregroundStyle(Color.blue.gradient)
-                    .cornerRadius(6)
+                    .foregroundStyle(brandTeal.gradient)
+                    .cornerRadius(4)
+
+                    BarMark(
+                        x: .value("Day", pt.dayLabel),
+                        y: .value("Minutes", nonWatchMins)
+                    )
+                    .foregroundStyle(mistTeal)
+                    .cornerRadius(4)
                 }
                 .chartYAxis {
                     AxisMarks(position: .leading) { val in
@@ -542,16 +560,24 @@ public struct DashboardView: View {
                 }
 
                 ZStack {
-                    Chart(slices, id: \.label) { s in
-                        SectorMark(
-                            angle: .value("Minutes", max(0.001, s.value)),
-                            innerRadius: .ratio(0.64),
-                            angularInset: 2
-                        )
-                        .cornerRadius(4)
-                        .foregroundStyle(s.color.gradient)
+                    let activeSlices = slices.filter { $0.value > 0 }
+                    if activeSlices.isEmpty {
+                        Circle()
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 20)
+                            .frame(width: 112, height: 112)
+                            .frame(height: 140)
+                    } else {
+                        Chart(activeSlices, id: \.label) { s in
+                            SectorMark(
+                                angle: .value("Minutes", s.value),
+                                innerRadius: .ratio(0.64),
+                                angularInset: activeSlices.count > 1 ? 2 : 0
+                            )
+                            .cornerRadius(4)
+                            .foregroundStyle(s.color.gradient)
+                        }
+                        .frame(height: 140)
                     }
-                    .frame(height: 140)
 
                     VStack(spacing: 1) {
                         Text(UsageStatsStore.formatHoursMinutes(usage.weekAppSeconds))
@@ -570,7 +596,7 @@ public struct DashboardView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text("\(Int(((s.value / totalWeekMins) * 100).rounded()))%")
+                            Text("\(usage.weekAppSeconds > 0 ? Int(((s.value / totalWeekMins) * 100).rounded()) : 0)%")
                                 .font(.caption2.monospacedDigit().weight(.medium))
                                 .foregroundStyle(.primary)
                         }
@@ -589,16 +615,16 @@ public struct DashboardView: View {
 
     private var statsGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 185), spacing: 14)], spacing: 14) {
-            statCard(title: "Videos", count: store.count(for: .videos), size: bytes(for: .video), symbol: "film", tint: .teal) {
+            statCard(title: "Videos", count: store.count(for: .videos), size: bytes(for: .video), symbol: "film", tint: brandTeal) {
                 store.selection = .smart(.videos)
             }
-            statCard(title: "Music & Audio", count: store.count(for: .audio), size: bytes(for: .audio), symbol: "music.note", tint: .blue) {
+            statCard(title: "Music & Audio", count: store.count(for: .audio), size: bytes(for: .audio), symbol: "music.note", tint: deepTeal) {
                 store.selection = .smart(.audio)
             }
-            statCard(title: "Photos", count: store.count(for: .photos), size: bytes(for: .image), symbol: "photo", tint: .indigo) {
+            statCard(title: "Photos", count: store.count(for: .photos), size: bytes(for: .image), symbol: "photo", tint: midTeal) {
                 store.selection = .smart(.photos)
             }
-            statCard(title: "PDF Documents", count: store.count(for: .documents), size: bytes(for: .pdf), symbol: "doc.richtext", tint: .orange) {
+            statCard(title: "PDF Documents", count: store.count(for: .documents), size: bytes(for: .pdf), symbol: "doc.richtext", tint: softTeal) {
                 store.selection = .smart(.documents)
             }
         }
@@ -676,10 +702,10 @@ public struct DashboardView: View {
             GeometryReader { geo in
                 let w = max(1, geo.size.width)
                 HStack(spacing: 2) {
-                    if vFrac > 0 { RoundedRectangle(cornerRadius: 4).fill(Color.teal).frame(width: max(4, w * vFrac)) }
-                    if aFrac > 0 { RoundedRectangle(cornerRadius: 4).fill(Color.blue).frame(width: max(4, w * aFrac)) }
-                    if pFrac > 0 { RoundedRectangle(cornerRadius: 4).fill(Color.indigo).frame(width: max(4, w * pFrac)) }
-                    if dFrac > 0 { RoundedRectangle(cornerRadius: 4).fill(Color.orange).frame(width: max(4, w * dFrac)) }
+                    if vFrac > 0 { RoundedRectangle(cornerRadius: 4).fill(brandTeal).frame(width: max(4, w * vFrac)) }
+                    if aFrac > 0 { RoundedRectangle(cornerRadius: 4).fill(deepTeal).frame(width: max(4, w * aFrac)) }
+                    if pFrac > 0 { RoundedRectangle(cornerRadius: 4).fill(midTeal).frame(width: max(4, w * pFrac)) }
+                    if dFrac > 0 { RoundedRectangle(cornerRadius: 4).fill(mistTeal).frame(width: max(4, w * dFrac)) }
                     if totalBytes == 0 { RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.08)) }
                 }
                 .animation(.easeInOut(duration: 0.45), value: totalBytes)
@@ -687,10 +713,10 @@ public struct DashboardView: View {
             .frame(height: 10)
 
             HStack(spacing: 16) {
-                legendDot("Videos", color: .teal)
-                legendDot("Audio", color: .blue)
-                legendDot("Photos", color: .indigo)
-                legendDot("PDFs", color: .orange)
+                legendDot("Videos", color: brandTeal)
+                legendDot("Audio", color: deepTeal)
+                legendDot("Photos", color: midTeal)
+                legendDot("PDFs", color: mistTeal)
             }
             .font(.caption2)
             .foregroundStyle(.secondary)

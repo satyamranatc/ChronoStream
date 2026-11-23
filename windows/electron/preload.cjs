@@ -8,6 +8,11 @@ contextBridge.exposeInMainWorld("chronoAPI", {
   revealInExplorer: (filePath) => ipcRenderer.invoke("fs:reveal", filePath),
   openInboxFolder: () => ipcRenderer.invoke("fs:open-inbox"),
   readTextFile: (filePath) => ipcRenderer.invoke("fs:read-text", filePath),
+  renameFile: (filePath, newName) => ipcRenderer.invoke("fs:rename", filePath, newName),
+  trashFiles: (paths) => ipcRenderer.invoke("fs:trash", paths),
+  duplicateFiles: (paths) => ipcRenderer.invoke("fs:duplicate", paths),
+  transferFiles: (paths, destDir, mode) => ipcRenderer.invoke("fs:transfer", paths, destDir, mode),
+  startFileDrag: (filePath) => ipcRenderer.send("fs:start-drag", filePath),
 
   loadState: (key) => ipcRenderer.invoke("state:load", key),
   saveState: (key, value) => ipcRenderer.invoke("state:save", key, value),

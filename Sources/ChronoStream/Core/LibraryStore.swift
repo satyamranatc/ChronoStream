@@ -17,8 +17,16 @@ public final class LibraryStore {
     public var viewMode: ExplorerViewMode = .grid
     public var sortOrder: MediaSortOrder = .dateDesc
 
+    public enum ClipboardMode: Sendable {
+        case copy
+        case cut
+    }
+
     public var isScanning: Bool = false
     public var scanStatusText: String = ""
+    public var clipboardURLs: [URL] = []
+    public var clipboardMode: ClipboardMode = .copy
+    public var fileOpMessage: String?
     public var monitorFoldersEnabled: Bool = false {
         didSet {
             persistState()
@@ -394,6 +402,296 @@ public final class LibraryStore {
 
     public func revealInFinder(_ item: MediaItem) {
         NSWorkspace.shared.activateFileViewerSelecting([item.url])
+    }
+
+    // MARK: - Finder-Style File Operations (Cut, Copy, Paste, Rename, Duplicate, Move, Trash)
+
+    private func flashFileOp(_ message: String) {
+        fileOpMessage = message
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            if self.fileOpMessage == message {
+                self.fileOpMessage = nil
+            }
+        }
+    }
+
+    private func uniqueDestinationURL(in folder: URL, filename: String) -> URL {
+        let fm = FileManager.default
+        let baseURL = folder.appendingPathComponent(filename)
+        guard fm.fileExists(atPath: baseURL.path) else { return baseURL }
+        let ext = baseURL.pathExtension
+        let stem = baseURL.deletingPathExtension().lastPathComponent
+        var idx = 2
+        while true {
+            let candidateName = ext.isEmpty ? "\(stem) \(idx)" : "\(stem) \(idx).\(ext)"
+            let candidate = folder.appendingPathComponent(candidateName)
+            if !fm.fileExists(atPath: candidate.path) { return candidate }
+            idx += 1
+        }
+    }
+
+    public var currentFolderURL: URL? {
+        if case .folder(let path) = selection {
+            return URL(fileURLWithPath: path)
+        }
+        return nil
+    }
+
+    public var hasPasteableFiles: Bool {
+        if !clipboardURLs.isEmpty { return true }
+        if let urls = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           !urls.isEmpty {
+            return true
+        }
+        return false
+    }
+
+    public func copyItems(_ targets: [MediaItem]) {
+        guard !targets.isEmpty else { return }
+        let urls = targets.map(\.url)
+        clipboardURLs = urls
+        clipboardMode = .copy
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects(urls as [NSURL])
+        flashFileOp("Copied \(targets.count == 1 ? targets[0].name : "\(targets.count) items")")
+    }
+
+    public func cutItems(_ targets: [MediaItem]) {
+        guard !targets.isEmpty else { return }
+        let urls = targets.map(\.url)
+        clipboardURLs = urls
+        clipboardMode = .cut
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects(urls as [NSURL])
+        flashFileOp("Cut \(targets.count == 1 ? targets[0].name : "\(targets.count) items") — ready to paste")
+    }
+
+    public func copyPaths(_ targets: [MediaItem]) {
+        guard !targets.isEmpty else { return }
+        let text = targets.map(\.path).joined(separator: "\n")
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        flashFileOp("Copied path\(targets.count > 1 ? "s" : "")")
+    }
+
+    public func pasteItems(into explicitFolder: URL? = nil) {
+        let sourceURLs: [URL]
+        let isCut: Bool
+        if !clipboardURLs.isEmpty {
+            sourceURLs = clipboardURLs
+            isCut = (clipboardMode == .cut)
+        } else if let pbURLs = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !pbURLs.isEmpty {
+            sourceURLs = pbURLs
+            isCut = false
+        } else {
+            return
+        }
+
+        let targetFolder: URL
+        if let folder = explicitFolder ?? currentFolderURL {
+            targetFolder = folder
+        } else {
+            let panel = NSOpenPanel()
+            panel.title = isCut ? "Move Items To Folder" : "Paste Items Into Folder"
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            guard panel.runModal() == .OK, let picked = panel.url else { return }
+            targetFolder = picked
+        }
+
+        let fm = FileManager.default
+        var succeeded = 0
+        for src in sourceURLs {
+            guard fm.fileExists(atPath: src.path) else { continue }
+            let dest = uniqueDestinationURL(in: targetFolder, filename: src.lastPathComponent)
+            do {
+                if isCut {
+                    if src.deletingLastPathComponent().standardizedFileURL == targetFolder.standardizedFileURL {
+                        continue
+                    }
+                    try fm.moveItem(at: src, to: dest)
+                    migrateMetadata(from: src.standardizedFileURL.path, to: dest.standardizedFileURL.path)
+                } else {
+                    try fm.copyItem(at: src, to: dest)
+                }
+                succeeded += 1
+            } catch {
+                // Skip failed file
+            }
+        }
+
+        if isCut {
+            clipboardURLs.removeAll()
+            clipboardMode = .copy
+        }
+        if succeeded > 0 {
+            rescanAllFolders()
+            flashFileOp("\(isCut ? "Moved" : "Pasted") \(succeeded) item\(succeeded == 1 ? "" : "s") into \(targetFolder.lastPathComponent)")
+        }
+    }
+
+    @discardableResult
+    public func renameItem(_ item: MediaItem, to rawName: String) -> Bool {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        guard !trimmed.isEmpty else { return false }
+
+        let oldURL = item.url
+        let oldExt = oldURL.pathExtension
+        let finalName: String
+        if URL(fileURLWithPath: trimmed).pathExtension.isEmpty && !oldExt.isEmpty {
+            finalName = "\(trimmed).\(oldExt)"
+        } else {
+            finalName = trimmed
+        }
+        let newURL = oldURL.deletingLastPathComponent().appendingPathComponent(finalName)
+        guard newURL.standardizedFileURL != oldURL.standardizedFileURL else { return true }
+
+        do {
+            try FileManager.default.moveItem(at: oldURL, to: newURL)
+            let oldID = item.id
+            let newID = newURL.standardizedFileURL.path
+            migrateMetadata(from: oldID, to: newID)
+
+            let updated = MediaItem(
+                url: newURL,
+                kind: MediaFormatRegistry.kind(for: newURL) ?? item.kind,
+                fileSize: item.fileSize,
+                modifiedDate: Date(),
+                duration: item.duration,
+                isFavorite: favorites.contains(newID),
+                lastPosition: playbackPositions[newID] ?? item.lastPosition,
+                lastOpened: lastOpenedDates[newID] ?? item.lastOpened
+            )
+            if let idx = items.firstIndex(where: { $0.id == oldID }) {
+                items[idx] = updated
+            }
+            if activeItem?.id == oldID {
+                activeItem = updated
+            }
+            persistState()
+            flashFileOp("Renamed to \(finalName)")
+            return true
+        } catch {
+            flashFileOp("Rename failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    public func duplicateItems(_ targets: [MediaItem]) {
+        guard !targets.isEmpty else { return }
+        let fm = FileManager.default
+        var created = 0
+        for item in targets {
+            let folder = item.url.deletingLastPathComponent()
+            let ext = item.url.pathExtension
+            let stem = item.url.deletingPathExtension().lastPathComponent
+            let copyName = ext.isEmpty ? "\(stem) copy" : "\(stem) copy.\(ext)"
+            let dest = uniqueDestinationURL(in: folder, filename: copyName)
+            do {
+                try fm.copyItem(at: item.url, to: dest)
+                let newItem = MediaItem(
+                    url: dest,
+                    kind: item.kind,
+                    fileSize: item.fileSize,
+                    modifiedDate: Date(),
+                    duration: item.duration
+                )
+                items.insert(newItem, at: 0)
+                created += 1
+            } catch {
+                // Skip failed copy
+            }
+        }
+        if created > 0 {
+            flashFileOp("Duplicated \(created) item\(created == 1 ? "" : "s")")
+        }
+    }
+
+    public func moveItems(_ targets: [MediaItem], to destinationFolder: URL) {
+        guard !targets.isEmpty else { return }
+        let fm = FileManager.default
+        var moved = 0
+        for item in targets {
+            guard item.url.deletingLastPathComponent().standardizedFileURL != destinationFolder.standardizedFileURL else { continue }
+            let dest = uniqueDestinationURL(in: destinationFolder, filename: item.url.lastPathComponent)
+            do {
+                try fm.moveItem(at: item.url, to: dest)
+                migrateMetadata(from: item.id, to: dest.standardizedFileURL.path)
+                moved += 1
+            } catch {
+                // Skip failed move
+            }
+        }
+        if moved > 0 {
+            rescanAllFolders()
+            flashFileOp("Moved \(moved) item\(moved == 1 ? "" : "s") to \(destinationFolder.lastPathComponent)")
+        }
+    }
+
+    public func promptMoveItems(_ targets: [MediaItem]) {
+        guard !targets.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Move \(targets.count == 1 ? targets[0].name : "\(targets.count) Items") To…"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let dest = panel.url {
+            moveItems(targets, to: dest)
+        }
+    }
+
+    public func trashItems(_ targets: [MediaItem]) {
+        guard !targets.isEmpty else { return }
+        let fm = FileManager.default
+        var trashedIDs = Set<String>()
+        for item in targets {
+            do {
+                try fm.trashItem(at: item.url, resultingItemURL: nil)
+                trashedIDs.insert(item.id)
+            } catch {
+                // Skip failed trash
+            }
+        }
+        if !trashedIDs.isEmpty {
+            items.removeAll { trashedIDs.contains($0.id) }
+            if let active = activeItem, trashedIDs.contains(active.id) {
+                activeItem = nil
+            }
+            for id in trashedIDs {
+                favorites.remove(id)
+                playbackPositions.removeValue(forKey: id)
+                lastOpenedDates.removeValue(forKey: id)
+                for idx in collections.indices {
+                    collections[idx].itemIDs.removeAll { $0 == id }
+                }
+            }
+            persistState()
+            flashFileOp("Moved \(trashedIDs.count) item\(trashedIDs.count == 1 ? "" : "s") to Trash")
+        }
+    }
+
+    private func migrateMetadata(from oldID: String, to newID: String) {
+        if favorites.remove(oldID) != nil {
+            favorites.insert(newID)
+        }
+        if let pos = playbackPositions.removeValue(forKey: oldID) {
+            playbackPositions[newID] = pos
+        }
+        if let date = lastOpenedDates.removeValue(forKey: oldID) {
+            lastOpenedDates[newID] = date
+        }
+        for idx in collections.indices {
+            if let itemIdx = collections[idx].itemIDs.firstIndex(of: oldID) {
+                collections[idx].itemIDs[itemIdx] = newID
+            }
+        }
     }
 
     // MARK: - Optional Folder Monitoring (User Consent)
