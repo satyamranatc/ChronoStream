@@ -1327,6 +1327,17 @@ public struct MainWindowView: View {
                     store.activeItem = nil
                 }
             )
+        case .textFile:
+            QuickFileEditorView(
+                item: item,
+                onShare: {
+                    itemsToShare = [item]
+                    showShareSheet = true
+                },
+                onClose: {
+                    store.activeItem = nil
+                }
+            )
         }
     }
 

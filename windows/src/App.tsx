@@ -14,6 +14,7 @@ import AudioStageView from "./components/AudioStageView";
 import DocumentStudioView from "./components/DocumentStudioView";
 import WiFiShareHubView from "./components/WiFiShareHubView";
 import PDFReaderView from "./components/PDFReaderView";
+import QuickFileEditorView from "./components/QuickFileEditorView";
 import { PhotoViewerView, PhotoStudioView, VideoStudioView } from "./components/MediaViewers";
 import DisplaysPopover from "./components/DisplaysPopover";
 import SettingsModal from "./components/SettingsModal";
@@ -175,7 +176,8 @@ export default function App() {
     const ext = p.split(".").pop()?.toLowerCase() || "";
     const kind = ["mp4", "mov", "m4v", "mkv", "avi", "webm"].includes(ext) ? "video"
       : ["mp3", "wav", "m4a", "flac", "ogg"].includes(ext) ? "audio"
-      : ["pdf"].includes(ext) ? "pdf" : "image";
+      : ["pdf"].includes(ext) ? "pdf"
+      : ["jpg", "jpeg", "png", "heic", "gif", "webp", "bmp"].includes(ext) ? "image" : "file";
     const tempItem: MediaItem = { id: p, path: p, name: p.split(/[\\/]/).pop() || p, kind, ext: ext.toUpperCase(), fileSize: 0, modifiedAt: Date.now() };
     setActiveItem(tempItem);
   };
@@ -424,7 +426,23 @@ export default function App() {
   const hasExternalDisplay = displays.length > 1;
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden" style={{ fontSize: `${baseFontPx}px`, background: "var(--cs-canvas)", color: "var(--cs-text)" }}>
+    <div
+      className="flex h-screen w-screen flex-col overflow-hidden"
+      style={{ fontSize: `${baseFontPx}px`, background: "var(--cs-canvas)", color: "var(--cs-text)" }}
+      onDragOver={(e) => { e.preventDefault(); }}
+      onDrop={(e) => {
+        e.preventDefault();
+        const f = e.dataTransfer?.files?.[0] as (File & { path?: string }) | undefined;
+        if (!f?.path) return;
+        const p = f.path;
+        const ext = p.split(".").pop()?.toLowerCase() || "";
+        const kind = ["mp4", "mov", "m4v", "mkv", "avi", "webm"].includes(ext) ? "video"
+          : ["mp3", "wav", "m4a", "flac", "ogg"].includes(ext) ? "audio"
+          : ["pdf"].includes(ext) ? "pdf"
+          : ["jpg", "jpeg", "png", "heic", "gif", "webp", "bmp"].includes(ext) ? "image" : "file";
+        openItem({ id: p, path: p, name: f.name || p.split(/[\\/]/).pop() || p, kind, ext: ext.toUpperCase(), fileSize: f.size || 0, modifiedAt: f.lastModified || Date.now() });
+      }}
+    >
       {/* Clean Top Window Bar (Sidebar sits cleanly BELOW this bar) */}
       <div className="flex h-11 shrink-0 items-center justify-between border-b px-3.5" style={{ borderColor: "var(--cs-border)", background: "var(--cs-surface)" }}>
         <div className="flex items-center gap-2.5">
@@ -602,6 +620,8 @@ export default function App() {
               />
             ) : activeItem.kind === "pdf" ? (
               <PDFReaderView item={activeItem} onShare={shareItem} onClose={() => setActiveItem(null)} />
+            ) : activeItem.kind === "file" ? (
+              <QuickFileEditorView item={activeItem} onShare={shareItem} onClose={() => setActiveItem(null)} />
             ) : (
               <PhotoViewerView item={activeItem} onShare={shareItem} onClose={() => setActiveItem(null)} />
             )

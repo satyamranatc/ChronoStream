@@ -1,6 +1,39 @@
 import AppKit
 import AVFoundation
+import AVKit
 import SwiftUI
+
+private enum VideoAspectMode: String, CaseIterable, Identifiable {
+    case fit = "Fit"
+    case fill = "Fill"
+    case ratio16x9 = "16:9"
+    case ratio4x3 = "4:3"
+    var id: String { rawValue }
+}
+
+@MainActor
+private final class PiPBridge: NSObject {
+    var pipController: AVPictureInPictureController?
+
+    func attach(to playerLayer: AVPlayerLayer) {
+        guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
+        if pipController == nil {
+            pipController = AVPictureInPictureController(playerLayer: playerLayer)
+        }
+    }
+
+    func toggle() -> Bool {
+        guard let pip = pipController else { return false }
+        if pip.isPictureInPictureActive {
+            pip.stopPictureInPicture()
+            return false
+        } else if pip.isPictureInPicturePossible {
+            pip.startPictureInPicture()
+            return true
+        }
+        return false
+    }
+}
 
 private final class PlayerLayerNSView: NSView {
     let playerLayer = AVPlayerLayer()
@@ -26,10 +59,14 @@ private final class PlayerLayerNSView: NSView {
 
 private struct AVPlayerSurface: NSViewRepresentable {
     let player: AVPlayer
+    let videoGravity: AVLayerVideoGravity
+    let pipBridge: PiPBridge
 
     func makeNSView(context: Context) -> PlayerLayerNSView {
         let view = PlayerLayerNSView()
         view.playerLayer.player = player
+        view.playerLayer.videoGravity = videoGravity
+        pipBridge.attach(to: view.playerLayer)
         return view
     }
 
@@ -37,6 +74,10 @@ private struct AVPlayerSurface: NSViewRepresentable {
         if nsView.playerLayer.player !== player {
             nsView.playerLayer.player = player
         }
+        if nsView.playerLayer.videoGravity != videoGravity {
+            nsView.playerLayer.videoGravity = videoGravity
+        }
+        pipBridge.attach(to: nsView.playerLayer)
     }
 }
 
@@ -65,7 +106,17 @@ public struct VideoStageView: View {
     @State private var showShortcutsHelp = false
     @State private var showDisplayPopover = false
     @State private var showEnhancePopover = false
+    @State private var showToolsPopover = false
+    @State private var showBookmarksPopover = false
+    @State private var newBookmarkLabel = ""
+    @State private var videoRotation: Double = 0
+    @State private var aspectMode: VideoAspectMode = .fit
+    @State private var pipBridge = PiPBridge()
     private let displayManager = DisplayManager.shared
+
+    private var anyPopoverOpen: Bool {
+        showEnhancePopover || showToolsPopover || showBookmarksPopover || showShortcutsHelp
+    }
 
     private let speeds: [Float] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0]
     private let zoomWindows: [Double] = [0, 3600, 900, 120]
@@ -81,10 +132,19 @@ public struct VideoStageView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            AVPlayerSurface(player: controller.player)
-                .scaleEffect(videoZoom)
-                .offset(videoPan)
-                .clipped()
+            AVPlayerSurface(
+                player: controller.player,
+                videoGravity: aspectMode == .fill ? .resizeAspectFill : (aspectMode == .fit ? .resizeAspect : .resize),
+                pipBridge: pipBridge
+            )
+            .aspectRatio(
+                aspectMode == .ratio16x9 ? (16.0 / 9.0) : (aspectMode == .ratio4x3 ? (4.0 / 3.0) : nil),
+                contentMode: .fit
+            )
+            .rotationEffect(.degrees(videoRotation))
+            .scaleEffect(videoZoom)
+            .offset(videoPan)
+            .clipped()
                 .contentShape(Rectangle())
                 .gesture(
                     MagnifyGesture()
@@ -212,15 +272,36 @@ public struct VideoStageView: View {
                         .foregroundStyle(.white)
                         .help("Share via AirDrop or Wi-Fi QR (Android & iPhone)")
 
+                        // 1-Click Frame Snapshot (S)
                         Button {
-                            controller.promptLoadSubtitles()
+                            triggerSnapshot()
                         } label: {
-                            Label(controller.subtitles.isEmpty ? "Subtitles" : "CC Active", systemImage: "captions.bubble")
-                                .font(.caption.weight(.medium))
+                            Image(systemName: "camera")
+                                .foregroundStyle(.white)
                         }
                         .buttonStyle(.bordered)
                         .tint(.white.opacity(0.2))
-                        .foregroundStyle(.white)
+                        .help("Capture Frame Snapshot (S) — saves PNG & copies to clipboard")
+
+                        // Timestamp Bookmarks (B)
+                        Button {
+                            showBookmarksPopover.toggle()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: controller.bookmarks.isEmpty ? "bookmark" : "bookmark.fill")
+                                if !controller.bookmarks.isEmpty {
+                                    Text("\(controller.bookmarks.count)")
+                                        .font(.caption2.monospacedDigit().weight(.semibold))
+                                }
+                            }
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(controller.bookmarks.isEmpty ? .white.opacity(0.2) : .accentColor)
+                        .help("Timestamp Bookmarks (B)")
+                        .popover(isPresented: $showBookmarksPopover, arrowEdge: .bottom) {
+                            bookmarksPopover
+                        }
 
                         // Live GPU Video Enhancement Button & Popover
                         Button {
@@ -233,12 +314,38 @@ public struct VideoStageView: View {
                             .font(.caption.weight(.medium))
                         }
                         .buttonStyle(.bordered)
-                        .tint(controller.enhanceMode == .off ? .white.opacity(0.2) : .teal)
+                        .tint(controller.enhanceMode == .off ? .white.opacity(0.2) : .accentColor)
                         .foregroundStyle(.white)
                         .help("Live GPU Video Enhancement (E) — Sharpen, Denoise & CCTV Clarity")
                         .popover(isPresented: $showEnhancePopover, arrowEdge: .bottom) {
                             videoEnhancePopover
                         }
+
+                        // Video Tools (Rotate, Aspect Ratio, A-B Loop, Audio & Subtitles)
+                        Button {
+                            showToolsPopover.toggle()
+                        } label: {
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint((controller.loopPointA != nil || videoRotation != 0 || aspectMode != .fit) ? .accentColor : .white.opacity(0.2))
+                        .help("Video Tools — Rotate, Aspect Ratio, A-B Loop, Audio & Subtitles")
+                        .popover(isPresented: $showToolsPopover, arrowEdge: .bottom) {
+                            videoToolsPopover
+                        }
+
+                        // Native Picture-in-Picture (P)
+                        Button {
+                            let active = pipBridge.toggle()
+                            flashOSD(active ? "Picture-in-Picture" : "PiP Off", symbol: "pip")
+                        } label: {
+                            Image(systemName: "pip.enter")
+                                .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.white.opacity(0.2))
+                        .help("Picture-in-Picture (P)")
 
                         if videoZoom > 1.01 {
                             Button {
@@ -403,24 +510,15 @@ public struct VideoStageView: View {
         .onHover { inside in
             isHoveringStage = inside
             withAnimation(.easeInOut(duration: 0.2)) {
-                showControls = inside || !controller.isPlaying || showEnhancePopover || showShortcutsHelp
+                showControls = inside || !controller.isPlaying || anyPopoverOpen
             }
         }
-        .onChange(of: showEnhancePopover) { _, open in
+        .onChange(of: anyPopoverOpen) { _, open in
             if open {
                 showControls = true
             } else {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    showControls = isHoveringStage || !controller.isPlaying || showShortcutsHelp
-                }
-            }
-        }
-        .onChange(of: showShortcutsHelp) { _, open in
-            if open {
-                showControls = true
-            } else {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showControls = isHoveringStage || !controller.isPlaying || showEnhancePopover
+                    showControls = isHoveringStage || !controller.isPlaying
                 }
             }
         }
@@ -538,6 +636,10 @@ public struct VideoStageView: View {
         case 53: // Escape
             if showEnhancePopover {
                 showEnhancePopover = false
+            } else if showToolsPopover {
+                showToolsPopover = false
+            } else if showBookmarksPopover {
+                showBookmarksPopover = false
             } else if showShortcutsHelp {
                 showShortcutsHelp = false
             } else if let win = NSApp.keyWindow, win.styleMask.contains(.fullScreen) {
@@ -609,6 +711,23 @@ public struct VideoStageView: View {
             controller.cycleEnhanceMode()
             flashOSD("Enhance: \(controller.enhanceMode.rawValue)", symbol: "wand.and.stars")
             return true
+        case "s":
+            triggerSnapshot()
+            return true
+        case "b":
+            controller.addBookmark()
+            flashOSD("Bookmarked \(MediaFormatting.timeString(controller.currentTime))", symbol: "bookmark.fill")
+            return true
+        case "p":
+            let active = pipBridge.toggle()
+            flashOSD(active ? "Picture-in-Picture" : "PiP Off", symbol: "pip")
+            return true
+        case "a":
+            let all = VideoAspectMode.allCases
+            let next = all[((all.firstIndex(of: aspectMode) ?? 0) + 1) % all.count]
+            aspectMode = next
+            flashOSD("Aspect: \(next.rawValue)", symbol: "aspectratio")
+            return true
         case "c":
             controller.promptLoadSubtitles()
             return true
@@ -662,6 +781,233 @@ public struct VideoStageView: View {
                 osdSymbol = nil
             }
         }
+    }
+
+    private func triggerSnapshot() {
+        flashOSD("Saving Snapshot…", symbol: "camera")
+        Task {
+            if let url = await controller.captureSnapshot() {
+                flashOSD("Snapshot Saved (\(url.lastPathComponent))", symbol: "checkmark.circle.fill")
+            } else {
+                flashOSD("Snapshot Failed", symbol: "exclamationmark.triangle")
+            }
+        }
+    }
+
+    private var bookmarksPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Timestamp Bookmarks", systemImage: "bookmark.fill")
+                    .font(.headline)
+                Spacer()
+                Text(MediaFormatting.timeString(controller.currentTime))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                TextField("Label (optional, e.g. Plate visible)", text: $newBookmarkLabel)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        controller.addBookmark(label: newBookmarkLabel)
+                        newBookmarkLabel = ""
+                    }
+                Button("Add") {
+                    controller.addBookmark(label: newBookmarkLabel)
+                    newBookmarkLabel = ""
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            if controller.bookmarks.isEmpty {
+                Text("Press B anytime while watching to bookmark key moments in long videos.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(controller.bookmarks) { bm in
+                            HStack(spacing: 8) {
+                                Button {
+                                    controller.seek(to: bm.time)
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Text(MediaFormatting.timeString(bm.time))
+                                            .font(.caption.monospacedDigit().weight(.semibold))
+                                            .foregroundStyle(Color.accentColor)
+                                            .frame(width: 58, alignment: .leading)
+                                        Text(bm.label)
+                                            .font(.callout)
+                                            .lineLimit(1)
+                                        Spacer()
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    controller.removeBookmark(bm)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
+                        }
+                    }
+                }
+                .frame(maxHeight: 200)
+            }
+        }
+        .padding(16)
+        .frame(width: 320)
+    }
+
+    private var videoToolsPopover: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Video Tools")
+                .font(.headline)
+
+            // Rotate & Aspect Ratio
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Rotation")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(Int(videoRotation))°")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                HStack(spacing: 6) {
+                    Button { videoRotation = (videoRotation + 90).truncatingRemainder(dividingBy: 360) } label: {
+                        Label("Rotate 90°", systemImage: "rotate.right")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    if videoRotation != 0 {
+                        Button("Reset") { videoRotation = 0 }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+
+                Text("Aspect Ratio")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                Picker("", selection: $aspectMode) {
+                    ForEach(VideoAspectMode.allCases) { m in
+                        Text(m.rawValue).tag(m)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Divider()
+
+            // A-B Loop
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("A-B Loop")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if let a = controller.loopPointA {
+                        Text("\(MediaFormatting.timeString(a)) → \(controller.loopPointB.map(MediaFormatting.timeString) ?? "…")")
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+                HStack(spacing: 6) {
+                    Button("Set A") {
+                        controller.setLoopA()
+                        flashOSD("Loop A: \(MediaFormatting.timeString(controller.currentTime))", symbol: "repeat")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("Set B") {
+                        controller.setLoopB()
+                        flashOSD("A-B Loop Active", symbol: "repeat.1")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+
+                    if controller.loopPointA != nil {
+                        Button("Clear") {
+                            controller.clearABLoop()
+                            flashOSD("Loop Cleared", symbol: "repeat")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+
+            Divider()
+
+            // Embedded Audio & Subtitles
+            VStack(alignment: .leading, spacing: 8) {
+                if !controller.audioTrackNames.isEmpty {
+                    HStack {
+                        Text("Audio Track")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { controller.selectedAudioTrackIndex },
+                            set: { controller.selectAudioTrack(index: $0) }
+                        )) {
+                            ForEach(Array(controller.audioTrackNames.enumerated()), id: \.offset) { idx, name in
+                                Text(name).tag(idx)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 165)
+                    }
+                }
+
+                HStack {
+                    Text("Subtitles")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if !controller.embeddedSubtitleNames.isEmpty {
+                        Picker("", selection: Binding(
+                            get: { controller.selectedEmbeddedSubtitleIndex ?? -1 },
+                            set: { controller.selectEmbeddedSubtitle(index: $0 < 0 ? nil : $0) }
+                        )) {
+                            Text("Off").tag(-1)
+                            ForEach(Array(controller.embeddedSubtitleNames.enumerated()), id: \.offset) { idx, name in
+                                Text(name).tag(idx)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 165)
+                    }
+                }
+
+                Button {
+                    showToolsPopover = false
+                    controller.promptLoadSubtitles()
+                } label: {
+                    Label(controller.subtitles.isEmpty ? "Load External .srt / .vtt…" : "External CC Loaded (Replace…)", systemImage: "captions.bubble")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(16)
+        .frame(width: 300)
     }
 
     private var videoEnhancePopover: some View {

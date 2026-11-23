@@ -104,6 +104,8 @@ public actor ThumbnailCache {
             return decodeImageThumbnail(url: item.url, maxPixelSize: maxPixelSize)
         case .pdf:
             return renderPDFThumbnail(url: item.url, maxPixelSize: maxPixelSize)
+        case .textFile:
+            return await generateQuickLookThumbnail(url: item.url, size: maxPixelSize)
         case .audio:
             return await extractAudioArtwork(url: item.url, maxPixelSize: maxPixelSize)
         case .video:

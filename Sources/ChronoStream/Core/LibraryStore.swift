@@ -274,7 +274,7 @@ public final class LibraryStore {
 
                 while let fileURL = enumerator.nextObject() as? URL {
                     if Task.isCancelled { return }
-                    guard let kind = MediaFormatRegistry.kind(for: fileURL) else { continue }
+                    guard let kind = MediaFormatRegistry.kind(for: fileURL), kind != .textFile else { continue }
                     guard let vals = try? fileURL.resourceValues(forKeys: Set(keys)),
                           vals.isRegularFile == true else { continue }
                     let stdPath = fileURL.standardizedFileURL.path

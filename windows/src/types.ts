@@ -1,4 +1,4 @@
-export type MediaKind = "video" | "audio" | "image" | "pdf";
+export type MediaKind = "video" | "audio" | "image" | "pdf" | "file";
 
 export interface MediaItem {
   id: string;
@@ -132,6 +132,9 @@ declare global {
       revealInExplorer: (p: string) => Promise<void>;
       openInboxFolder: () => Promise<void>;
       readTextFile: (p: string) => Promise<string | null>;
+      writeTextFile: (p: string, content: string) => Promise<{ ok: boolean; error?: string }>;
+      openExternalFile: (p: string) => Promise<string>;
+      saveSnapshot: (dataUrl: string, baseName: string) => Promise<{ ok: boolean; path?: string; name?: string; error?: string }>;
       renameFile: (p: string, newName: string) => Promise<{ ok: boolean; newPath?: string; newName?: string; error?: string }>;
       trashFiles: (paths: string[]) => Promise<{ ok: boolean; trashed: string[] }>;
       duplicateFiles: (paths: string[]) => Promise<{ ok: boolean; created: string[] }>;

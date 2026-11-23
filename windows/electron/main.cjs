@@ -280,6 +280,23 @@ ipcMain.handle("fs:open-inbox", async () => shell.openPath(inboxDir()));
 ipcMain.handle("fs:read-text", async (_e, filePath) => {
   try { return fs.readFileSync(filePath, "utf8"); } catch { return null; }
 });
+ipcMain.handle("fs:write-text", async (_e, filePath, content) => {
+  try { fs.writeFileSync(filePath, String(content ?? ""), "utf8"); return { ok: true }; } catch (err) { return { ok: false, error: err.message }; }
+});
+ipcMain.handle("fs:open-external", async (_e, filePath) => shell.openPath(filePath));
+ipcMain.handle("fs:save-snapshot", async (_e, dataUrl, baseName) => {
+  try {
+    const dir = path.join(app.getPath("pictures"), "ChronoStream Snapshots");
+    fs.mkdirSync(dir, { recursive: true });
+    const safe = String(baseName || "snapshot").replace(/[/:\\?%*|"<>\r\n]/g, "-");
+    const dest = path.join(dir, `${safe}.png`);
+    const base64 = String(dataUrl || "").replace(/^data:image\/png;base64,/, "");
+    fs.writeFileSync(dest, Buffer.from(base64, "base64"));
+    return { ok: true, path: dest, name: path.basename(dest) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 function uniqueDestPath(destDir, filename) {
   const base = path.join(destDir, filename);

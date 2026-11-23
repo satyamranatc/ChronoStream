@@ -65,6 +65,20 @@ private final class LiveEnhancementBox: @unchecked Sendable {
     }
 }
 
+public struct VideoBookmark: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public let time: Double
+    public var label: String
+    public let createdAt: Date
+
+    public init(id: UUID = UUID(), time: Double, label: String, createdAt: Date = Date()) {
+        self.id = id
+        self.time = time
+        self.label = label
+        self.createdAt = createdAt
+    }
+}
+
 public struct SubtitleCue: Identifiable, Sendable {
     public let id: Int
     public let startTime: Double
@@ -338,6 +352,30 @@ public final class VideoPlayerController {
     public var enhanceMode: VideoEnhanceMode = .off
     public var enhanceParams: VideoEnhanceParams = VideoEnhanceMode.off.defaultParams
 
+    // A-B Loop state
+    public var loopPointA: Double?
+    public var loopPointB: Double?
+
+    // Timestamp Bookmarks for current video
+    public var bookmarks: [VideoBookmark] = []
+    private var allBookmarks: [String: [VideoBookmark]] = [:]
+
+    // Embedded Audio & Subtitle tracks
+    public var audioTrackNames: [String] = []
+    public var selectedAudioTrackIndex: Int = 0
+    public var embeddedSubtitleNames: [String] = []
+    public var selectedEmbeddedSubtitleIndex: Int? = nil // nil = Off
+    private var audioGroup: AVMediaSelectionGroup?
+    private var subtitleGroup: AVMediaSelectionGroup?
+
+    private static let bookmarksFileURL: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        let dir = base.appendingPathComponent("ChronoStream", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("video_bookmarks.json")
+    }()
+
     private let enhancementBox = LiveEnhancementBox()
     private var currentAsset: AVURLAsset?
     private var enhancementComposition: AVVideoComposition?
@@ -351,6 +389,7 @@ public final class VideoPlayerController {
     public init() {
         player.automaticallyWaitsToMinimizeStalling = true
         player.allowsExternalPlayback = true
+        loadAllBookmarksFromDisk()
     }
 
     public func bind(store: LibraryStore) {
@@ -379,6 +418,15 @@ public final class VideoPlayerController {
         currentTime = 0
         duration = item.duration ?? 0
         lastSavedPosition = -10
+        loopPointA = nil
+        loopPointB = nil
+        audioTrackNames = []
+        selectedAudioTrackIndex = 0
+        embeddedSubtitleNames = []
+        selectedEmbeddedSubtitleIndex = nil
+        audioGroup = nil
+        subtitleGroup = nil
+        bookmarks = (allBookmarks[item.id] ?? []).sorted { $0.time < $1.time }
 
         loadTask = Task {
             // Inspect magic bytes & load subtitles off the main thread
@@ -447,6 +495,7 @@ public final class VideoPlayerController {
                 await self.attachEnhancementComposition(to: playerItem, asset: asset)
             }
 
+            await self.loadEmbeddedTracks(asset: asset, playerItem: playerItem)
             previewEngine.configure(url: playbackURL, duration: self.duration)
             guard !Task.isCancelled, gen == self.loadGeneration else { return }
 
@@ -663,6 +712,9 @@ public final class VideoPlayerController {
                 guard let self else { return }
                 self.currentTime = sec
                 self.isPlaying = self.player.rate > 0
+                if let a = self.loopPointA, let b = self.loopPointB, b > a + 0.25, sec >= b {
+                    self.seek(to: a)
+                }
                 self.updateSubtitle(at: sec)
                 self.savePositionIfNeeded(force: false)
             }
@@ -690,5 +742,192 @@ public final class VideoPlayerController {
             lastSavedPosition = currentTime
             libraryStore?.updatePlaybackPosition(for: item.id, position: currentTime, duration: duration)
         }
+    }
+
+    // MARK: - A-B Loop
+
+    public func setLoopA() {
+        loopPointA = currentTime
+        if let b = loopPointB, b <= currentTime + 0.25 {
+            loopPointB = nil
+        }
+    }
+
+    public func setLoopB() {
+        guard let a = loopPointA else {
+            loopPointA = max(0, currentTime - 5)
+            loopPointB = currentTime
+            return
+        }
+        if currentTime > a + 0.25 {
+            loopPointB = currentTime
+            seek(to: a)
+        }
+    }
+
+    public func clearABLoop() {
+        loopPointA = nil
+        loopPointB = nil
+    }
+
+    // MARK: - Timestamp Bookmarks
+
+    public func addBookmark(label: String? = nil) {
+        guard let item = currentItem else { return }
+        let trimmed = (label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = trimmed.isEmpty ? "Moment \(bookmarks.count + 1)" : trimmed
+        let bm = VideoBookmark(time: currentTime, label: title)
+        bookmarks.append(bm)
+        bookmarks.sort { $0.time < $1.time }
+        allBookmarks[item.id] = bookmarks
+        persistAllBookmarksToDisk()
+    }
+
+    public func removeBookmark(_ bookmark: VideoBookmark) {
+        guard let item = currentItem else { return }
+        bookmarks.removeAll { $0.id == bookmark.id }
+        allBookmarks[item.id] = bookmarks
+        persistAllBookmarksToDisk()
+    }
+
+    private func loadAllBookmarksFromDisk() {
+        guard let data = try? Data(contentsOf: Self.bookmarksFileURL),
+              let decoded = try? JSONDecoder().decode([String: [VideoBookmark]].self, from: data) else {
+            return
+        }
+        allBookmarks = decoded
+    }
+
+    private func persistAllBookmarksToDisk() {
+        if let data = try? JSONEncoder().encode(allBookmarks) {
+            try? data.write(to: Self.bookmarksFileURL, options: .atomic)
+        }
+    }
+
+    // MARK: - Embedded Audio & Subtitle Tracks
+
+    private func loadEmbeddedTracks(asset: AVURLAsset, playerItem: AVPlayerItem) async {
+        if let audible = try? await asset.loadMediaSelectionGroup(for: .audible) {
+            self.audioGroup = audible
+            self.audioTrackNames = audible.options.enumerated().map { idx, opt in
+                let name = opt.displayName
+                return name.isEmpty ? "Audio Track \(idx + 1)" : name
+            }
+            if let current = playerItem.currentMediaSelection.selectedMediaOption(in: audible),
+               let idx = audible.options.firstIndex(of: current) {
+                self.selectedAudioTrackIndex = idx
+            } else {
+                self.selectedAudioTrackIndex = 0
+            }
+        }
+        if let legible = try? await asset.loadMediaSelectionGroup(for: .legible) {
+            self.subtitleGroup = legible
+            self.embeddedSubtitleNames = legible.options.enumerated().map { idx, opt in
+                let name = opt.displayName
+                return name.isEmpty ? "Subtitle Track \(idx + 1)" : name
+            }
+            if let current = playerItem.currentMediaSelection.selectedMediaOption(in: legible),
+               let idx = legible.options.firstIndex(of: current) {
+                self.selectedEmbeddedSubtitleIndex = idx
+            } else {
+                self.selectedEmbeddedSubtitleIndex = nil
+            }
+        }
+    }
+
+    public func selectAudioTrack(index: Int) {
+        guard let group = audioGroup,
+              index >= 0, index < group.options.count,
+              let playerItem = player.currentItem else { return }
+        playerItem.select(group.options[index], in: group)
+        selectedAudioTrackIndex = index
+    }
+
+    public func selectEmbeddedSubtitle(index: Int?) {
+        guard let group = subtitleGroup, let playerItem = player.currentItem else { return }
+        if let idx = index, idx >= 0, idx < group.options.count {
+            playerItem.select(group.options[idx], in: group)
+            selectedEmbeddedSubtitleIndex = idx
+        } else {
+            playerItem.select(nil, in: group)
+            selectedEmbeddedSubtitleIndex = nil
+        }
+    }
+
+    // MARK: - 1-Click Frame Snapshot (with active GPU Enhancement)
+
+    public func captureSnapshot() async -> URL? {
+        guard let asset = currentAsset, let item = currentItem else { return nil }
+        let snapTime = CMTime(seconds: currentTime, preferredTimescale: 600)
+        let params = enhancementBox.snapshot()
+        let ciContext = enhancementBox.ciContext
+        let baseName = item.url.deletingPathExtension().lastPathComponent
+        let timeSlug = MediaFormatting.timeString(currentTime).replacingOccurrences(of: ":", with: "-")
+
+        return await Task.detached(priority: .userInitiated) { () -> URL? in
+            let gen = AVAssetImageGenerator(asset: asset)
+            gen.appliesPreferredTrackTransform = true
+            gen.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
+            gen.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
+            guard let (rawCG, _) = try? await gen.image(at: snapTime) else { return nil }
+
+            var finalCG = rawCG
+            if params.enabled {
+                var img = CIImage(cgImage: rawCG)
+                let extent = img.extent
+                img = img.clampedToExtent()
+                if params.denoise > 0.002 {
+                    let nr = CIFilter.noiseReduction()
+                    nr.inputImage = img
+                    nr.noiseLevel = Float(params.denoise)
+                    nr.sharpness = Float(min(0.8, 0.35 + params.sharpness * 0.25))
+                    if let out = nr.outputImage { img = out }
+                }
+                if params.shadowLift > 0.01 {
+                    let hs = CIFilter.highlightShadowAdjust()
+                    hs.inputImage = img
+                    hs.shadowAmount = Float(params.shadowLift)
+                    hs.highlightAmount = 0.92
+                    if let out = hs.outputImage { img = out }
+                }
+                if params.sharpness > 0.05 {
+                    let unsharp = CIFilter.unsharpMask()
+                    unsharp.inputImage = img
+                    unsharp.radius = Float(1.6 + min(1.0, params.sharpness * 0.5))
+                    unsharp.intensity = Float(min(1.6, params.sharpness * 0.9))
+                    if let out = unsharp.outputImage { img = out }
+                }
+                if abs(params.contrast - 1.0) > 0.005 || abs(params.saturation - 1.0) > 0.005 {
+                    let cc = CIFilter.colorControls()
+                    cc.inputImage = img
+                    cc.contrast = Float(params.contrast)
+                    cc.saturation = Float(params.saturation)
+                    if let out = cc.outputImage { img = out }
+                }
+                if let rendered = ciContext.createCGImage(img.cropped(to: extent), from: extent) {
+                    finalCG = rendered
+                }
+            }
+
+            let rep = NSBitmapImageRep(cgImage: finalCG)
+            guard let pngData = rep.representation(using: .png, properties: [:]) else { return nil }
+            let picsDir = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+                ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures")
+            let outDir = picsDir.appendingPathComponent("ChronoStream Snapshots", isDirectory: true)
+            try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+            let dest = outDir.appendingPathComponent("\(baseName)_\(timeSlug).png")
+            do {
+                try pngData.write(to: dest, options: .atomic)
+                let nsImg = NSImage(cgImage: finalCG, size: NSSize(width: finalCG.width, height: finalCG.height))
+                await MainActor.run {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.writeObjects([nsImg])
+                }
+                return dest
+            } catch {
+                return nil
+            }
+        }.value
     }
 }

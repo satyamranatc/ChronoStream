@@ -6,6 +6,7 @@ public enum MediaKind: String, Codable, CaseIterable, Sendable {
     case audio
     case image
     case pdf
+    case textFile
 
     public var displayName: String {
         switch self {
@@ -13,6 +14,7 @@ public enum MediaKind: String, Codable, CaseIterable, Sendable {
         case .audio: return "Audio"
         case .image: return "Photo"
         case .pdf: return "Document"
+        case .textFile: return "File / Code"
         }
     }
 
@@ -22,6 +24,7 @@ public enum MediaKind: String, Codable, CaseIterable, Sendable {
         case .audio: return "music.note"
         case .image: return "photo"
         case .pdf: return "doc.richtext"
+        case .textFile: return "chevron.left.forwardslash.chevron.right"
         }
     }
 }
@@ -31,6 +34,7 @@ public enum ContainerCompatibility: String, Sendable {
     case ffmpegRemux = "FFmpeg Remux Fallback"
     case nativeImageIO = "Native ImageIO / CGImageSource"
     case nativePDFKit = "Native PDFKit"
+    case quickEditor = "Built-In Text / Code / Office Viewer"
     case unsupported = "Unsupported or Corrupted"
 }
 
@@ -39,9 +43,18 @@ public enum MediaFormatRegistry {
     public static let audioExtensions: Set<String> = ["mp3", "wav", "aac", "m4a", "flac", "alac", "aiff", "ogg", "opus"]
     public static let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "heic", "heif", "tiff", "tif", "gif", "webp", "bmp", "dng", "cr2", "nef", "arw"]
     public static let documentExtensions: Set<String> = ["pdf"]
+    public static let textCodeOfficeExtensions: Set<String> = [
+        // Office & spreadsheets
+        "doc", "docx", "rtf", "odt", "xls", "xlsx", "csv", "tsv",
+        // Text & web/config
+        "txt", "md", "markdown", "html", "htm", "xml", "svg", "json", "yaml", "yml", "toml", "ini", "env", "log", "conf", "cfg", "sql",
+        // Code files
+        "swift", "js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "java", "kt", "kts", "c", "h", "cpp", "hpp", "cc", "cs", "go", "rs",
+        "rb", "php", "sh", "zsh", "bash", "css", "scss", "less", "vue", "svelte", "r", "dart", "lua", "pl", "dockerfile", "makefile"
+    ]
 
     public static let allSupportedExtensions: Set<String> =
-        videoExtensions.union(audioExtensions).union(imageExtensions).union(documentExtensions)
+        videoExtensions.union(audioExtensions).union(imageExtensions).union(documentExtensions).union(textCodeOfficeExtensions)
 
     public static func kind(for url: URL) -> MediaKind? {
         let ext = url.pathExtension.lowercased()
@@ -49,6 +62,7 @@ public enum MediaFormatRegistry {
         if audioExtensions.contains(ext) { return .audio }
         if imageExtensions.contains(ext) { return .image }
         if documentExtensions.contains(ext) { return .pdf }
+        if textCodeOfficeExtensions.contains(ext) { return .textFile }
         return nil
     }
 
@@ -69,6 +83,9 @@ public enum MediaFormatRegistry {
                 return .nativePDFKit
             }
             return .unsupported
+
+        case .textFile:
+            return .quickEditor
 
         case .image:
             // JPEG, PNG, GIF, TIFF, WebP, HEIC/ftyp, BMP

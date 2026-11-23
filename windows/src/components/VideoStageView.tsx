@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   ChevronLeft, Play, Pause, RotateCcw, RotateCw, Volume2, VolumeX,
-  Maximize, Tv, Keyboard, Share2, Subtitles
+  Maximize, Tv, Keyboard, Share2, Subtitles, Camera, Bookmark, PictureInPicture2, SlidersHorizontal, Trash2
 } from "lucide-react";
 import { MediaItem, formatTime } from "../types";
 
@@ -39,9 +39,75 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
   const [videoZoom, setVideoZoom] = useState(1);
   const [videoPan, setVideoPan] = useState({ x: 0, y: 0 });
   const [enhanceMode, setEnhanceMode] = useState<"off" | "enhanced" | "cctv" | "ultra">("off");
+  const [videoRotation, setVideoRotation] = useState(0);
+  const [aspectMode, setAspectMode] = useState<"fit" | "fill" | "16:9" | "4:3">("fit");
+  const [loopA, setLoopA] = useState<number | null>(null);
+  const [loopB, setLoopB] = useState<number | null>(null);
+  const [bookmarks, setBookmarks] = useState<{ id: string; time: number; label: string }[]>([]);
+  const [bookmarkLabel, setBookmarkLabel] = useState("");
+  const [showBookmarks, setShowBookmarks] = useState(false);
+  const [showTools, setShowTools] = useState(false);
   const dragPanRef = useRef<{ active: boolean; startX: number; startY: number; baseX: number; baseY: number }>({
     active: false, startX: 0, startY: 0, baseX: 0, baseY: 0
   });
+
+  // Load saved timestamp bookmarks for this video
+  useEffect(() => {
+    setLoopA(null);
+    setLoopB(null);
+    (async () => {
+      const all = await window.chronoAPI?.loadState<Record<string, { id: string; time: number; label: string }[]>>("video_bookmarks");
+      setBookmarks((all?.[item.id] || []).sort((a, b) => a.time - b.time));
+    })();
+  }, [item.id]);
+
+  const persistBookmarks = async (next: { id: string; time: number; label: string }[]) => {
+    setBookmarks(next);
+    const all = (await window.chronoAPI?.loadState<Record<string, { id: string; time: number; label: string }[]>>("video_bookmarks")) || {};
+    all[item.id] = next;
+    await window.chronoAPI?.saveState("video_bookmarks", all);
+  };
+
+  const addBookmark = (label?: string) => {
+    const t = videoRef.current?.currentTime ?? currentTime;
+    const text = (label || "").trim() || `Moment ${bookmarks.length + 1}`;
+    const next = [...bookmarks, { id: `${Date.now()}`, time: t, label: text }].sort((a, b) => a.time - b.time);
+    persistBookmarks(next);
+    flashOSD(`Bookmarked ${formatTime(t)}`);
+  };
+
+  const captureSnapshot = async () => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return;
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    if (enhanceFilter !== "none") ctx.filter = enhanceFilter;
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    const dataUrl = c.toDataURL("image/png");
+    const stem = item.name.replace(/\.[^.]+$/, "");
+    const slug = formatTime(v.currentTime).replace(/:/g, "-");
+    const res = await window.chronoAPI?.saveSnapshot(dataUrl, `${stem}_${slug}`);
+    flashOSD(res?.ok ? `Snapshot Saved (${res.name})` : "Snapshot Saved");
+  };
+
+  const togglePiP = async () => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+        flashOSD("PiP Off");
+      } else {
+        await v.requestPictureInPicture();
+        flashOSD("Picture-in-Picture");
+      }
+    } catch {
+      flashOSD("PiP Unavailable");
+    }
+  };
 
   const cycleEnhance = () => {
     const order: ("off" | "enhanced" | "cctv" | "ultra")[] = ["off", "enhanced", "cctv", "ultra"];
@@ -178,6 +244,23 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
         case "e":
         case "E":
           cycleEnhance(); break;
+        case "s":
+        case "S":
+          captureSnapshot(); break;
+        case "b":
+        case "B":
+          addBookmark(); break;
+        case "p":
+        case "P":
+          togglePiP(); break;
+        case "a":
+        case "A": {
+          const modes: ("fit" | "fill" | "16:9" | "4:3")[] = ["fit", "fill", "16:9", "4:3"];
+          const next = modes[(modes.indexOf(aspectMode) + 1) % modes.length];
+          setAspectMode(next);
+          flashOSD(`Aspect: ${next.toUpperCase()}`);
+          break;
+        }
         case "z":
         case "Z": {
           const nextZ = ZOOMS[(ZOOMS.indexOf(zoomWindow) + 1) % ZOOMS.length];
@@ -260,12 +343,32 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
         </div>
 
         <div className="flex items-center gap-2">
+          <button onClick={captureSnapshot} className="rounded-lg bg-white/15 p-1.5 hover:bg-white/25 cursor-pointer" title="Capture Frame Snapshot (S)">
+            <Camera size={14} />
+          </button>
+          <button
+            onClick={() => { setShowBookmarks((s) => !s); setShowTools(false); }}
+            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium cursor-pointer ${bookmarks.length ? "bg-blue-600" : "bg-white/15 hover:bg-white/25"}`}
+            title="Timestamp Bookmarks (B)"
+          >
+            <Bookmark size={13} /> {bookmarks.length > 0 && <span>{bookmarks.length}</span>}
+          </button>
           <button
             onClick={cycleEnhance}
-            className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium cursor-pointer ${enhanceMode !== "off" ? "bg-teal-600" : "bg-white/15 hover:bg-white/25"}`}
+            className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium cursor-pointer ${enhanceMode !== "off" ? "bg-blue-600" : "bg-white/15 hover:bg-white/25"}`}
             title="Live GPU Enhancement (E)"
           >
             {enhanceMode === "off" ? "Enhance" : enhanceMode === "enhanced" ? "Enhanced" : enhanceMode === "cctv" ? "CCTV Clarity" : "Ultra Crisp"}
+          </button>
+          <button
+            onClick={() => { setShowTools((s) => !s); setShowBookmarks(false); }}
+            className={`rounded-lg p-1.5 cursor-pointer ${(loopA !== null || videoRotation !== 0 || aspectMode !== "fit") ? "bg-blue-600" : "bg-white/15 hover:bg-white/25"}`}
+            title="Video Tools — Rotate, Aspect Ratio & A-B Loop"
+          >
+            <SlidersHorizontal size={14} />
+          </button>
+          <button onClick={togglePiP} className="rounded-lg bg-white/15 p-1.5 hover:bg-white/25 cursor-pointer" title="Picture-in-Picture (P)">
+            <PictureInPicture2 size={14} />
           </button>
           {videoZoom > 1.01 && (
             <button onClick={resetVideoZoom} className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-2.5 py-1 text-xs font-mono font-medium cursor-pointer" title="Reset Zoom (R)">
@@ -323,11 +426,12 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
             src={playbackUrl}
             autoPlay
             style={{
-              transform: `translate(${videoPan.x}px, ${videoPan.y}px) scale(${videoZoom})`,
+              transform: `translate(${videoPan.x}px, ${videoPan.y}px) scale(${videoZoom}) rotate(${videoRotation}deg)`,
               filter: enhanceFilter,
+              aspectRatio: aspectMode === "16:9" ? "16 / 9" : aspectMode === "4:3" ? "4 / 3" : undefined,
               cursor: videoZoom > 1.01 ? "grab" : "pointer"
             }}
-            className="h-full w-full object-contain transition-transform duration-75"
+            className={`h-full w-full transition-transform duration-75 ${aspectMode === "fill" ? "object-cover" : "object-contain"}`}
             onLoadedMetadata={(e) => {
               const v = e.currentTarget;
               setDuration(v.duration || 0);
@@ -339,6 +443,9 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
             onPause={() => { setIsPlaying(false); onProgress(item.id, currentTime, duration, false); }}
             onTimeUpdate={(e) => {
               const v = e.currentTarget;
+              if (loopA !== null && loopB !== null && loopB > loopA + 0.25 && v.currentTime >= loopB) {
+                v.currentTime = loopA;
+              }
               setCurrentTime(v.currentTime);
               onProgress(item.id, v.currentTime, v.duration || duration, !v.paused);
             }}
@@ -351,6 +458,74 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
         {osd && (
           <div className="pointer-events-none absolute rounded-full border border-white/15 bg-black/80 px-4 py-2 text-sm font-semibold">
             {osd}
+          </div>
+        )}
+
+        {showBookmarks && (
+          <div onClick={(e) => e.stopPropagation()} className="absolute right-4 top-14 z-30 w-80 rounded-2xl border border-white/15 bg-zinc-900/95 p-4 text-xs shadow-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-sm">Timestamp Bookmarks</span>
+              <span className="font-mono text-white/60">{formatTime(currentTime)}</span>
+            </div>
+            <div className="flex gap-1.5">
+              <input
+                value={bookmarkLabel}
+                onChange={(e) => setBookmarkLabel(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { addBookmark(bookmarkLabel); setBookmarkLabel(""); } }}
+                placeholder="Label (optional)…"
+                className="flex-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1.5 text-xs outline-none"
+              />
+              <button onClick={() => { addBookmark(bookmarkLabel); setBookmarkLabel(""); }} className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold cursor-pointer">Add</button>
+            </div>
+            <div className="max-h-48 overflow-y-auto space-y-1">
+              {bookmarks.length === 0 ? (
+                <div className="py-3 text-center text-white/50">Press B anytime to bookmark a moment.</div>
+              ) : (
+                bookmarks.map((bm) => (
+                  <div key={bm.id} className="flex items-center justify-between rounded-lg bg-white/5 px-2.5 py-1.5">
+                    <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = bm.time; }} className="flex items-center gap-2 text-left min-w-0 cursor-pointer">
+                      <span className="font-mono text-blue-400">{formatTime(bm.time)}</span>
+                      <span className="truncate">{bm.label}</span>
+                    </button>
+                    <button onClick={() => persistBookmarks(bookmarks.filter((x) => x.id !== bm.id))} className="text-white/50 hover:text-red-400 cursor-pointer">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {showTools && (
+          <div onClick={(e) => e.stopPropagation()} className="absolute right-4 top-14 z-30 w-72 rounded-2xl border border-white/15 bg-zinc-900/95 p-4 text-xs shadow-2xl space-y-3.5">
+            <div className="font-semibold text-sm">Video Tools</div>
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-white/60"><span>Rotation</span><span>{videoRotation}°</span></div>
+              <div className="flex gap-1.5">
+                <button onClick={() => setVideoRotation((r) => (r + 90) % 360)} className="rounded-lg bg-white/15 px-3 py-1 hover:bg-white/25 cursor-pointer">Rotate 90°</button>
+                {videoRotation !== 0 && <button onClick={() => setVideoRotation(0)} className="rounded-lg bg-white/10 px-2.5 py-1 cursor-pointer">Reset</button>}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <div className="text-white/60">Aspect Ratio</div>
+              <div className="grid grid-cols-4 gap-1">
+                {(["fit", "fill", "16:9", "4:3"] as const).map((m) => (
+                  <button key={m} onClick={() => setAspectMode(m)} className={`rounded-lg py-1 uppercase cursor-pointer ${aspectMode === m ? "bg-blue-600 font-semibold" : "bg-white/10 hover:bg-white/20"}`}>{m}</button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-white/60">
+                <span>A-B Loop</span>
+                {loopA !== null && <span className="font-mono text-blue-400">{formatTime(loopA)} → {loopB !== null ? formatTime(loopB) : "…"}</span>}
+              </div>
+              <div className="flex gap-1.5">
+                <button onClick={() => { setLoopA(currentTime); setLoopB(null); flashOSD(`Loop A: ${formatTime(currentTime)}`); }} className="rounded-lg bg-white/15 px-3 py-1 hover:bg-white/25 cursor-pointer">Set A</button>
+                <button onClick={() => { if (loopA !== null && currentTime > loopA + 0.25) { setLoopB(currentTime); if (videoRef.current) videoRef.current.currentTime = loopA; flashOSD("A-B Loop Active"); } }} className="rounded-lg bg-blue-600 px-3 py-1 font-semibold cursor-pointer">Set B</button>
+                {loopA !== null && <button onClick={() => { setLoopA(null); setLoopB(null); flashOSD("Loop Cleared"); }} className="rounded-lg bg-white/10 px-2.5 py-1 cursor-pointer">Clear</button>}
+              </div>
+            </div>
           </div>
         )}
 

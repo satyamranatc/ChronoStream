@@ -408,6 +408,7 @@ public final class LocalShareSession {
         case .video: return "video/mp4"
         case .audio: return "audio/mpeg"
         case .pdf: return "application/pdf"
+        case .textFile: return "application/octet-stream"
         case .image:
             switch item.fileExtension.lowercased() {
             case "png": return "image/png"
