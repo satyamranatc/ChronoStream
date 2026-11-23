@@ -32,7 +32,7 @@ public struct WelcomeView: View {
             title: "Welcome to ChronoStream",
             subtitle: "One fast, calm, offline-first workspace designed to bring all your everyday media and documents together.",
             symbol: "sparkles.rectangle.stack",
-            accent: .teal,
+            accent: Color(red: 0.0, green: 0.478, blue: 1.0),
             highlights: [
                 ("bolt.fill", "Fast, Calm & Native", "Instant startup, smooth playback for long 12–24+ hour videos, and Pure Light & Dark themes."),
                 ("arrow.uturn.backward.circle", "Zero Friction Navigation", "Exact scroll preservation when returning from any video, with your last played item highlighted."),
@@ -45,7 +45,7 @@ public struct WelcomeView: View {
             title: "All Your Media in One Place",
             subtitle: "Browse, organize, and manage videos, music, photos, PDFs, and Word documents effortlessly.",
             symbol: "folder.badge.gearshape",
-            accent: .teal,
+            accent: Color(red: 0.0, green: 0.478, blue: 1.0),
             highlights: [
                 ("cursorarrow.click.2", "Finder-Style Controls", "Single-click to select, navigate with arrow keys, double-click or press Return to play."),
                 ("doc.on.doc", "Cut, Copy, Paste, Rename & Drag-Drop", "Full right-click file actions and direct drag-and-drop to Finder, Desktop, or sidebar folders."),
@@ -58,7 +58,7 @@ public struct WelcomeView: View {
             title: "Read PDFs & Books Comfortably",
             subtitle: "A distraction-free PDF book reader and native Microsoft Word (.docx) writer built right in.",
             symbol: "book.pages",
-            accent: .teal,
+            accent: Color(red: 0.0, green: 0.478, blue: 1.0),
             highlights: [
                 ("paintpalette", "4 Calm Reading Themes", "Switch between Paper, Sepia, Soft Gray, and Night mode with Two-Page Book Spread."),
                 ("bookmark", "Chapters, Bookmarks & Study Notes", "Jump via Table of Contents, bookmark key pages, and save page-linked notes with auto-resume."),
@@ -71,7 +71,7 @@ public struct WelcomeView: View {
             title: "Share to Android & iOS Instantly",
             subtitle: "Send or receive files with any phone over local Wi-Fi — no cables, no apps to install, no cloud uploads.",
             symbol: "qrcode.viewfinder",
-            accent: .teal,
+            accent: Color(red: 0.0, green: 0.478, blue: 1.0),
             highlights: [
                 ("qrcode", "Scan QR & Download on Any Phone", "Share videos, photos, PDFs, or whole collections to Android or iPhone in one click."),
                 ("arrow.down.circle", "Two-Way Receive from Phone", "Send photos and videos from your phone straight into your ChronoStream Inbox folder."),
@@ -84,7 +84,7 @@ public struct WelcomeView: View {
             title: "100% Private. Completely Yours.",
             subtitle: "ChronoStream only reads folders you explicitly authorize. Connect a folder now or explore the workspace.",
             symbol: "lock.shield.fill",
-            accent: .teal,
+            accent: Color(red: 0.0, green: 0.478, blue: 1.0),
             highlights: [
                 ("folder.badge.plus", "You Control Folder Access", "Authorize any local folder with one click — nothing is ever uploaded or synced to the cloud."),
                 ("chart.bar.xaxis", "Local Activity & Storage Insights", "See your real watch time and library breakdown recorded 100% locally on your Mac."),
@@ -209,7 +209,7 @@ public struct WelcomeView: View {
                             Label("Get Started", systemImage: "arrow.right")
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.teal)
+                        .tint(Color(red: 0.0, green: 0.478, blue: 1.0))
                         .controlSize(.large)
                         .keyboardShortcut(.return, modifiers: [])
                     }

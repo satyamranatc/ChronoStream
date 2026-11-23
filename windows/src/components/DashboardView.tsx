@@ -101,9 +101,9 @@ export default function DashboardView({
 
   const browseMins = Math.max(0, (weekApp - weekVideo - weekAudio) / 60);
   const donutData = [
-    { name: "Video Watched", value: weekVideo / 60, color: "#008080" },
-    { name: "Audio Listened", value: weekAudio / 60, color: "#339999" },
-    { name: "Library & Studio", value: browseMins, color: "#A3D2D2" }
+    { name: "Video Watched", value: weekVideo / 60, color: "#007AFF" },
+    { name: "Audio Listened", value: weekAudio / 60, color: "#30B0C7" },
+    { name: "Library & Studio", value: browseMins, color: "#B8DAFF" }
   ].filter((d) => d.value > 0);
 
   const totalBytes = items.reduce((s, i) => s + i.fileSize, 0);
@@ -186,9 +186,9 @@ export default function DashboardView({
           {/* 3 Usage KPI Cards */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {[
-              { title: "Time in ChronoStream", today: formatHoursMinutes(todayRec.appSeconds), week: formatHoursMinutes(weekApp), all: formatHoursMinutes(allApp), color: "#008080", Icon: Clock },
-              { title: "Video Watched", today: formatHoursMinutes(todayRec.videoWatchedSeconds), week: formatHoursMinutes(weekVideo), all: formatHoursMinutes(allVideo), color: "#006666", Icon: Film },
-              { title: "Audio Listened", today: formatHoursMinutes(todayRec.audioListenedSeconds), week: formatHoursMinutes(weekAudio), all: formatHoursMinutes(allAudio), color: "#339999", Icon: Music }
+              { title: "Time in ChronoStream", today: formatHoursMinutes(todayRec.appSeconds), week: formatHoursMinutes(weekApp), all: formatHoursMinutes(allApp), color: "#007AFF", Icon: Clock },
+              { title: "Video Watched", today: formatHoursMinutes(todayRec.videoWatchedSeconds), week: formatHoursMinutes(weekVideo), all: formatHoursMinutes(allVideo), color: "#0051D5", Icon: Film },
+              { title: "Audio Listened", today: formatHoursMinutes(todayRec.audioListenedSeconds), week: formatHoursMinutes(weekAudio), all: formatHoursMinutes(allAudio), color: "#30B0C7", Icon: Music }
             ].map((k) => (
               <div key={k.title} className="cs-card rounded-2xl p-4 space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -215,8 +215,8 @@ export default function DashboardView({
                   <p className="text-xs" style={{ color: "var(--cs-text-secondary)" }}>Minutes spent in app vs. video watched</p>
                 </div>
                 <div className="flex gap-3 text-xs" style={{ color: "var(--cs-text-secondary)" }}>
-                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: "#A3D2D2" }} /> In App</span>
-                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: "#008080" }} /> Watched</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: "#B8DAFF" }} /> In App</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: "#007AFF" }} /> Watched</span>
                 </div>
               </div>
               <div className="h-48 w-full">
@@ -225,8 +225,8 @@ export default function DashboardView({
                     <XAxis dataKey="day" tick={{ fontSize: 11 }} stroke="var(--cs-text-tertiary)" axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 11 }} stroke="var(--cs-text-tertiary)" axisLine={false} tickLine={false} unit="m" />
                     <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid var(--cs-border)", background: "var(--cs-surface)", fontSize: 12 }} />
-                    <Bar dataKey="inApp" name="In App (min)" fill="#A3D2D2" radius={[6, 6, 0, 0]} />
-                    <Bar dataKey="watched" name="Watched (min)" fill="#008080" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="inApp" name="In App (min)" fill="#B8DAFF" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="watched" name="Watched (min)" fill="#007AFF" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -269,10 +269,10 @@ export default function DashboardView({
           {/* Media Library Counters */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             {[
-              { title: "Videos", count: byKind("video").length, size: bytesKind("video"), color: "#008080", Icon: Film, smart: "videos" as const },
-              { title: "Music & Audio", count: byKind("audio").length, size: bytesKind("audio"), color: "#006666", Icon: Music, smart: "audio" as const },
-              { title: "Photos", count: byKind("image").length, size: bytesKind("image"), color: "#339999", Icon: ImageIcon, smart: "photos" as const },
-              { title: "PDF Documents", count: byKind("pdf").length, size: bytesKind("pdf"), color: "#66B2B2", Icon: FileText, smart: "documents" as const }
+              { title: "Videos", count: byKind("video").length, size: bytesKind("video"), color: "#007AFF", Icon: Film, smart: "videos" as const },
+              { title: "Music & Audio", count: byKind("audio").length, size: bytesKind("audio"), color: "#0051D5", Icon: Music, smart: "audio" as const },
+              { title: "Photos", count: byKind("image").length, size: bytesKind("image"), color: "#30B0C7", Icon: ImageIcon, smart: "photos" as const },
+              { title: "PDF Documents", count: byKind("pdf").length, size: bytesKind("pdf"), color: "#5AC8FA", Icon: FileText, smart: "documents" as const }
             ].map((c) => (
               <button
                 key={c.title}

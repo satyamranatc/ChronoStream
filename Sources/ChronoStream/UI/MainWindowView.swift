@@ -49,7 +49,7 @@ private struct SidebarSectionHeader: View {
                     .frame(width: 18, height: 18)
                     .background(
                         Circle()
-                            .fill(isHovered ? Color.teal : Color.primary.opacity(0.08))
+                            .fill(isHovered ? Color.accentColor : Color.primary.opacity(0.08))
                     )
                     .contentShape(Circle())
             }
@@ -1364,15 +1364,15 @@ public struct MainWindowView: View {
         VStack(spacing: 18) {
             ZStack {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.teal.opacity(0.12))
+                    .fill(Color.accentColor.opacity(0.12))
                     .frame(width: 60, height: 60)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Color.teal.opacity(0.25), lineWidth: 1)
+                            .strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 1)
                     )
                 Image(systemName: "folder.badge.plus")
                     .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(Color.teal)
+                    .foregroundStyle(Color.accentColor)
             }
             .padding(.top, 4)
 
@@ -1400,7 +1400,6 @@ public struct MainWindowView: View {
                     Label("Connect Folder…", systemImage: "folder.badge.plus")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.teal)
                 .controlSize(.large)
                 .keyboardShortcut(.return, modifiers: [])
             }

@@ -16,9 +16,12 @@ public struct SplashScreenView: View {
         self.onFinished = onFinished
     }
 
+    private let appleBlue = Color(red: 0.0, green: 0.478, blue: 1.0)
+    private let softTeal = Color(red: 0.188, green: 0.690, blue: 0.780)
+
     private var bgSurface: Color {
         colorScheme == .light
-            ? Color(red: 0.980, green: 0.988, blue: 0.992)
+            ? Color(red: 0.968, green: 0.978, blue: 0.992)
             : Color(red: 0.075, green: 0.088, blue: 0.105)
     }
 
@@ -26,11 +29,12 @@ public struct SplashScreenView: View {
         ZStack {
             bgSurface.ignoresSafeArea()
 
-            // Subtle ambient teal radial glow
+            // Subtle ambient Apple Blue + hint of Teal radial glow
             RadialGradient(
                 colors: [
-                    Color.teal.opacity(colorScheme == .light ? 0.11 : 0.18),
-                    Color.teal.opacity(0.0)
+                    appleBlue.opacity(colorScheme == .light ? 0.11 : 0.20),
+                    softTeal.opacity(colorScheme == .light ? 0.05 : 0.08),
+                    appleBlue.opacity(0.0)
                 ],
                 center: .center,
                 startRadius: 24,
@@ -44,7 +48,7 @@ public struct SplashScreenView: View {
                 // Animated emblem
                 ZStack {
                     Circle()
-                        .stroke(Color.teal.opacity(0.18), lineWidth: 1.5)
+                        .stroke(appleBlue.opacity(0.22), lineWidth: 1.5)
                         .frame(width: 132, height: 132)
                         .scaleEffect(ringExpanded ? 1.16 : 0.85)
                         .opacity(ringExpanded ? 0.0 : 0.9)
@@ -52,10 +56,10 @@ public struct SplashScreenView: View {
                     Circle()
                         .fill(colorScheme == .light ? Color.white : Color.white.opacity(0.06))
                         .frame(width: 108, height: 108)
-                        .shadow(color: Color.teal.opacity(0.16), radius: 22, y: 8)
+                        .shadow(color: appleBlue.opacity(0.18), radius: 22, y: 8)
                         .overlay(
                             Circle()
-                                .strokeBorder(Color.teal.opacity(0.22), lineWidth: 1)
+                                .strokeBorder(appleBlue.opacity(0.22), lineWidth: 1)
                         )
 
                     if let icon = NSApp.applicationIconImage {
@@ -67,7 +71,7 @@ public struct SplashScreenView: View {
                     } else {
                         Image(systemName: "play.rectangle.fill")
                             .font(.system(size: 40, weight: .semibold))
-                            .foregroundStyle(Color.teal)
+                            .foregroundStyle(appleBlue)
                     }
                 }
                 .scaleEffect(logoVisible ? 1.0 : 0.84)
@@ -86,7 +90,7 @@ public struct SplashScreenView: View {
                 .offset(y: textVisible ? 0 : 10)
                 .opacity(textVisible ? 1.0 : 0.0)
 
-                // Sleek hairline progress bar
+                // Sleek hairline progress bar (Apple Blue with subtle Teal finish)
                 VStack(spacing: 8) {
                     ZStack(alignment: .leading) {
                         Capsule()
@@ -96,10 +100,7 @@ public struct SplashScreenView: View {
                         Capsule()
                             .fill(
                                 LinearGradient(
-                                    colors: [
-                                        Color(red: 0.0, green: 0.502, blue: 0.502),
-                                        Color(red: 0.400, green: 0.698, blue: 0.698)
-                                    ],
+                                    colors: [appleBlue, softTeal],
                                     startPoint: .leading,
                                     endPoint: .trailing
                                 )

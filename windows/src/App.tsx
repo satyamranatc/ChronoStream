@@ -646,15 +646,16 @@ export default function App() {
                 <div className="flex items-center gap-2.5">
                   <button
                     onClick={() => { setSelectMode((s) => !s); if (selectMode) setSelectedIds(new Set()); }}
-                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium cursor-pointer ${selectMode ? "border-teal-600 bg-teal-600 text-white" : ""}`}
-                    style={selectMode ? undefined : { borderColor: "var(--cs-border)", background: "var(--cs-canvas)" }}
+                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium cursor-pointer ${selectMode ? "text-white" : ""}`}
+                    style={selectMode ? { borderColor: "var(--cs-accent)", background: "var(--cs-accent)" } : { borderColor: "var(--cs-border)", background: "var(--cs-canvas)" }}
                   >
                     {selectMode ? "Done Selecting" : "Select"}
                   </button>
                   {clipboard && (
                     <button
                       onClick={() => handlePaste()}
-                      className="rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-medium text-white cursor-pointer"
+                      className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-white cursor-pointer"
+                      style={{ background: "var(--cs-accent)" }}
                     >
                       Paste ({clipboard.paths.length})
                     </button>
@@ -720,7 +721,7 @@ export default function App() {
                         }}
                         onDoubleClick={() => openItem(item)}
                         onClick={(e) => handleCardClick(e, item)}
-                        className={`cs-card group rounded-2xl p-3 cursor-pointer transition hover:-translate-y-0.5 space-y-2 ${isSelected ? "ring-2 ring-teal-700 shadow-md" : isLastPlayed ? "ring-2 ring-teal-500 shadow-md" : ""}`}
+                        className={`cs-card group rounded-2xl p-3 cursor-pointer transition hover:-translate-y-0.5 space-y-2 ${isSelected ? "ring-2 ring-blue-500 shadow-md" : isLastPlayed ? "ring-2 ring-teal-500 shadow-md" : ""}`}
                         style={isSelected || isLastPlayed ? { background: "var(--cs-accent-soft)" } : undefined}
                       >
                         <div className="relative flex h-28 items-center justify-center overflow-hidden rounded-xl" style={{ background: "var(--cs-surface-subtle)" }}>
@@ -912,7 +913,7 @@ export default function App() {
               <button onClick={() => setShowConnectPrompt(false)} className="rounded-lg border px-4 py-2 font-medium cursor-pointer" style={{ borderColor: "var(--cs-border)" }}>
                 Not Now
               </button>
-              <button onClick={() => { setShowConnectPrompt(false); addFolder(); }} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 font-semibold text-white cursor-pointer">
+              <button onClick={() => { setShowConnectPrompt(false); addFolder(); }} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 font-semibold text-white cursor-pointer" style={{ background: "var(--cs-accent)" }}>
                 <FolderPlus size={14} /> Connect Folder…
               </button>
             </div>

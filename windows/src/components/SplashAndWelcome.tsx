@@ -25,7 +25,7 @@ export function SplashScreen({ onFinished }: { onFinished: () => void }) {
       <div
         className="pointer-events-none absolute h-[420px] w-[420px] rounded-full blur-3xl transition-all duration-1000"
         style={{
-          background: "radial-gradient(circle, rgba(0,128,128,0.16) 0%, rgba(0,128,128,0) 70%)",
+          background: "radial-gradient(circle, rgba(0,122,255,0.16) 0%, rgba(48,176,199,0.08) 45%, rgba(0,122,255,0) 72%)",
           transform: visible ? "scale(1.1)" : "scale(0.8)",
           opacity: visible ? 1 : 0
         }}
@@ -37,9 +37,9 @@ export function SplashScreen({ onFinished }: { onFinished: () => void }) {
       >
         <div
           className="flex h-24 w-24 items-center justify-center rounded-3xl border shadow-xl"
-          style={{ background: "var(--cs-surface)", borderColor: "rgba(0,128,128,0.22)" }}
+          style={{ background: "var(--cs-surface)", borderColor: "rgba(0,122,255,0.22)" }}
         >
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-700 to-teal-500 text-white shadow-md">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-md" style={{ background: "linear-gradient(135deg, #007AFF 0%, #0051D5 72%, #30B0C7 100%)" }}>
             <Play size={28} fill="currentColor" />
           </div>
         </div>
@@ -54,8 +54,8 @@ export function SplashScreen({ onFinished }: { onFinished: () => void }) {
         <div className="flex flex-col items-center space-y-2 pt-1">
           <div className="h-1 w-44 overflow-hidden rounded-full" style={{ background: "var(--cs-surface-subtle)" }}>
             <div
-              className="h-full rounded-full bg-gradient-to-r from-teal-700 to-teal-500 transition-all duration-500 ease-out"
-              style={{ width: `${progress}%` }}
+              className="h-full rounded-full transition-all duration-500 ease-out"
+              style={{ width: `${progress}%`, background: "linear-gradient(90deg, #007AFF 0%, #30B0C7 100%)" }}
             />
           </div>
           <span className="text-[11px] font-medium" style={{ color: "var(--cs-text-tertiary)" }}>{status}</span>
@@ -71,7 +71,7 @@ const SLIDES = [
     title: "Welcome to ChronoStream",
     subtitle: "One fast, calm, offline-first workspace designed to bring all your everyday media and documents together.",
     Icon: Sparkles,
-    accent: "#008080",
+    accent: "#007AFF",
     highlights: [
       { Icon: Film, title: "Fast, Calm & Responsive", detail: "Smooth playback for long 12–24+ hour videos, music, photos, and Pure Light & Dark themes." },
       { Icon: Play, title: "Zero Friction Navigation", detail: "Exact scroll preservation when returning from any video, with your last played clip highlighted." }
@@ -82,7 +82,7 @@ const SLIDES = [
     title: "All Your Media in One Place",
     subtitle: "Browse, organize, and manage videos, music, photos, PDFs, and Word documents effortlessly.",
     Icon: FolderOpen,
-    accent: "#008080",
+    accent: "#007AFF",
     highlights: [
       { Icon: FolderOpen, title: "Explorer-Style Controls", detail: "Single-click to select, navigate with arrow keys, double-click or press Enter to play." },
       { Icon: Scissors, title: "Cut, Copy, Paste, Rename & Studios", detail: "Full right-click file actions, drag-and-drop, plus built-in Photo and Video Studios." }
@@ -93,7 +93,7 @@ const SLIDES = [
     title: "Read PDFs & Books Comfortably",
     subtitle: "A distraction-free PDF book reader and native Microsoft Word (.docx) writer built right in.",
     Icon: BookOpen,
-    accent: "#008080",
+    accent: "#007AFF",
     highlights: [
       { Icon: BookOpen, title: "4 Calm Reading Themes", detail: "Paper, Sepia, Soft Gray, and Night mode with Bookmarks, Study Notes & Zen Focus." },
       { Icon: FileText, title: "Native Word (.docx) & PDF Export", detail: "Write with clean formatting and export directly to .docx or print-ready PDF." }
@@ -104,7 +104,7 @@ const SLIDES = [
     title: "Share to Android & iOS Instantly",
     subtitle: "Send or receive files with any phone over local Wi-Fi — no cables, no phone apps, no cloud uploads.",
     Icon: QrCode,
-    accent: "#008080",
+    accent: "#007AFF",
     highlights: [
       { Icon: QrCode, title: "Scan QR & Download on Any Phone", detail: "One-click sharing for videos, photos, PDFs, and collections to Android or iPhone." },
       { Icon: ShieldCheck, title: "Two-Way PIN-Protected Transfers", detail: "Receive files from your phone into your Inbox with rotating 4-digit PIN security." }
@@ -115,7 +115,7 @@ const SLIDES = [
     title: "100% Private. Completely Yours.",
     subtitle: "ChronoStream only reads folders you explicitly add. Connect a folder now or explore the workspace.",
     Icon: ShieldCheck,
-    accent: "#008080",
+    accent: "#007AFF",
     highlights: [
       { Icon: FolderPlus, title: "You Control Folder Access", detail: "Add any local folder with one click — nothing is ever uploaded to the cloud." },
       { Icon: Sparkles, title: "Ready Whenever You Are", detail: "Click Get Started below to jump straight into ChronoStream." }
@@ -232,7 +232,8 @@ export function WelcomeSlidesModal({
                 </button>
                 <button
                   onClick={onStart}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                  style={{ background: "var(--cs-accent)" }}
                 >
                   Get Started <ArrowRight size={14} />
                 </button>

@@ -62,7 +62,7 @@ struct ChronoStreamApp: App {
                 audioController: audioController
             )
             .font(.system(size: resolvedBaseFontSize))
-            .tint(Color(red: 0.0, green: 0.502, blue: 0.502))
+            .tint(Color(red: 0.0, green: 0.478, blue: 1.0))
             .preferredColorScheme(resolvedColorScheme)
             .frame(minWidth: 960, minHeight: 620)
             .onAppear {

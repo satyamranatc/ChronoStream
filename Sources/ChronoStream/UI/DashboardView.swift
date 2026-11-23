@@ -175,7 +175,7 @@ private struct AmbientWaveCanvas: View {
                     path.closeSubpath()
 
                     let opacity = 0.08 - Double(layer) * 0.02
-                    ctx.fill(path, with: .color(Color(red: 0.0, green: 0.502, blue: 0.502).opacity(opacity)))
+                    ctx.fill(path, with: .color(Color(red: 0.0, green: 0.478, blue: 1.0).opacity(opacity)))
                 }
             }
         }
@@ -401,11 +401,11 @@ public struct DashboardView: View {
 
     // MARK: - Usage & Watch-Time KPIs + Native Apple Charts
 
-    private let brandTeal = Color(red: 0.0, green: 0.502, blue: 0.502)
-    private let deepTeal = Color(red: 0.0, green: 0.400, blue: 0.400)
-    private let midTeal = Color(red: 0.20, green: 0.62, blue: 0.62)
-    private let softTeal = Color(red: 0.40, green: 0.70, blue: 0.70)
-    private let mistTeal = Color(red: 0.65, green: 0.83, blue: 0.83)
+    private let brandTeal = Color(red: 0.0, green: 0.478, blue: 1.0)      // Apple Blue #007AFF
+    private let deepTeal = Color(red: 0.0, green: 0.318, blue: 0.835)     // Deep Apple Blue #0051D5
+    private let midTeal = Color(red: 0.188, green: 0.690, blue: 0.780)    // Subtle Apple Teal #30B0C7
+    private let softTeal = Color(red: 0.35, green: 0.65, blue: 0.98)      // Soft Sky Blue
+    private let mistTeal = Color(red: 0.72, green: 0.86, blue: 0.98)      // Mist Blue
 
     private var watchTimeKPIRow: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 14)], spacing: 14) {
