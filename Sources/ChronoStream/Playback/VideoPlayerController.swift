@@ -1,7 +1,69 @@
 import AppKit
 @preconcurrency import AVFoundation
+import CoreImage
+import CoreImage.CIFilterBuiltins
 import Foundation
 import Observation
+
+// MARK: - Real-Time GPU Video Enhancement Engine (Metal-Backed CoreImage)
+
+public enum VideoEnhanceMode: String, CaseIterable, Identifiable, Sendable {
+    case off = "Off"
+    case enhanced = "Enhanced"
+    case cctvClarity = "CCTV Clarity"
+    case ultraCrisp = "Ultra Crisp"
+
+    public var id: String { rawValue }
+
+    public var subtitle: String {
+        switch self {
+        case .off: return "Original unmodified video"
+        case .enhanced: return "Balanced GPU denoise, contrast & sharpening"
+        case .cctvClarity: return "Blurry faces, number plates & dark CCTV footage"
+        case .ultraCrisp: return "Maximum edge clarity & detail restoration"
+        }
+    }
+
+    public var defaultParams: VideoEnhanceParams {
+        switch self {
+        case .off:
+            return VideoEnhanceParams(enabled: false, sharpness: 0, denoise: 0, shadowLift: 0, contrast: 1.0, saturation: 1.0)
+        case .enhanced:
+            return VideoEnhanceParams(enabled: true, sharpness: 0.45, denoise: 0.015, shadowLift: 0.12, contrast: 1.07, saturation: 1.06)
+        case .cctvClarity:
+            return VideoEnhanceParams(enabled: true, sharpness: 1.05, denoise: 0.035, shadowLift: 0.46, contrast: 1.15, saturation: 1.04)
+        case .ultraCrisp:
+            return VideoEnhanceParams(enabled: true, sharpness: 1.35, denoise: 0.025, shadowLift: 0.30, contrast: 1.12, saturation: 1.08)
+        }
+    }
+}
+
+public struct VideoEnhanceParams: Equatable, Sendable {
+    public var enabled: Bool
+    public var sharpness: Double     // 0.0 ... 2.0
+    public var denoise: Double       // 0.0 ... 0.08
+    public var shadowLift: Double    // 0.0 ... 0.8
+    public var contrast: Double      // 0.85 ... 1.4
+    public var saturation: Double    // 0.7 ... 1.4
+}
+
+private final class LiveEnhancementBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var params: VideoEnhanceParams = VideoEnhanceMode.off.defaultParams
+    let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    func update(_ next: VideoEnhanceParams) {
+        lock.lock()
+        params = next
+        lock.unlock()
+    }
+
+    func snapshot() -> VideoEnhanceParams {
+        lock.lock()
+        defer { lock.unlock() }
+        return params
+    }
+}
 
 public struct SubtitleCue: Identifiable, Sendable {
     public let id: Int
@@ -272,6 +334,13 @@ public final class VideoPlayerController {
     public var activeSubtitleText: String?
     public var hoverPreviewImage: NSImage?
 
+    // Real-time GPU Video Enhancement state
+    public var enhanceMode: VideoEnhanceMode = .off
+    public var enhanceParams: VideoEnhanceParams = VideoEnhanceMode.off.defaultParams
+
+    private let enhancementBox = LiveEnhancementBox()
+    private var currentAsset: AVURLAsset?
+    private var enhancementComposition: AVVideoComposition?
     private var timeObserver: Any?
     private var lastSavedPosition: Double = -10
     private let previewEngine = ScrubPreviewEngine()
@@ -367,10 +436,16 @@ public final class VideoPlayerController {
             }
 
             guard !Task.isCancelled, gen == self.loadGeneration else { return }
+            self.currentAsset = asset
+            self.enhancementComposition = nil
             let playerItem = AVPlayerItem(asset: asset)
             player.replaceCurrentItem(with: playerItem)
             player.volume = volume
             player.isMuted = isMuted
+
+            if self.enhanceMode != .off {
+                await self.attachEnhancementComposition(to: playerItem, asset: asset)
+            }
 
             previewEngine.configure(url: playbackURL, duration: self.duration)
             guard !Task.isCancelled, gen == self.loadGeneration else { return }
@@ -411,9 +486,123 @@ public final class VideoPlayerController {
         pause()
         stopObserving()
         player.replaceCurrentItem(with: nil)
+        currentAsset = nil
+        enhancementComposition = nil
         currentItem = nil
         isLoading = false
         statusMessage = nil
+    }
+
+    // MARK: - Live GPU Enhancement Controls
+
+    public func setEnhanceMode(_ mode: VideoEnhanceMode) {
+        enhanceMode = mode
+        let defaults = mode.defaultParams
+        enhanceParams = defaults
+        enhancementBox.update(defaults)
+        syncEnhancementPipeline()
+    }
+
+    public func updateEnhanceParams(_ next: VideoEnhanceParams) {
+        enhanceParams = next
+        if !next.enabled {
+            enhanceMode = .off
+        } else if enhanceMode == .off {
+            enhanceMode = .enhanced
+        }
+        enhancementBox.update(next)
+        syncEnhancementPipeline()
+    }
+
+    public func cycleEnhanceMode() {
+        let all = VideoEnhanceMode.allCases
+        let idx = all.firstIndex(of: enhanceMode) ?? 0
+        setEnhanceMode(all[(idx + 1) % all.count])
+    }
+
+    private func syncEnhancementPipeline() {
+        guard let item = player.currentItem else { return }
+        if !enhanceParams.enabled || enhanceMode == .off {
+            item.videoComposition = nil
+            return
+        }
+        if let comp = enhancementComposition {
+            if item.videoComposition !== comp {
+                item.videoComposition = comp
+            }
+            return
+        }
+        guard let asset = currentAsset else { return }
+        let gen = loadGeneration
+        Task {
+            guard gen == self.loadGeneration, let liveItem = self.player.currentItem else { return }
+            await self.attachEnhancementComposition(to: liveItem, asset: asset)
+        }
+    }
+
+    private func attachEnhancementComposition(to playerItem: AVPlayerItem, asset: AVURLAsset) async {
+        let box = enhancementBox
+        do {
+            let comp = try await AVVideoComposition.videoComposition(with: asset) { request in
+                let p = box.snapshot()
+                let extent = request.sourceImage.extent
+                guard p.enabled else {
+                    request.finish(with: request.sourceImage, context: box.ciContext)
+                    return
+                }
+
+                var img = request.sourceImage.clampedToExtent()
+
+                // 1. GPU Noise Reduction (cleans H.264 / low-light CCTV grain)
+                if p.denoise > 0.002 {
+                    let nr = CIFilter.noiseReduction()
+                    nr.inputImage = img
+                    nr.noiseLevel = Float(p.denoise)
+                    nr.sharpness = Float(min(0.8, 0.35 + p.sharpness * 0.25))
+                    if let out = nr.outputImage { img = out }
+                }
+
+                // 2. Shadow Lift & Highlight Recovery (reveals faces/objects in dark CCTV scenes)
+                if p.shadowLift > 0.01 {
+                    let hs = CIFilter.highlightShadowAdjust()
+                    hs.inputImage = img
+                    hs.shadowAmount = Float(p.shadowLift)
+                    hs.highlightAmount = 0.92
+                    if let out = hs.outputImage { img = out }
+                }
+
+                // 3. Smart Unsharp Mask + Luminance Sharpening (text, faces, number plates)
+                if p.sharpness > 0.05 {
+                    let unsharp = CIFilter.unsharpMask()
+                    unsharp.inputImage = img
+                    unsharp.radius = Float(1.6 + min(1.0, p.sharpness * 0.5))
+                    unsharp.intensity = Float(min(1.6, p.sharpness * 0.9))
+                    if let out = unsharp.outputImage { img = out }
+
+                    let lum = CIFilter.sharpenLuminance()
+                    lum.inputImage = img
+                    lum.sharpness = Float(min(0.85, p.sharpness * 0.38))
+                    if let out = lum.outputImage { img = out }
+                }
+
+                // 4. Local Clarity Contrast & Natural Saturation
+                if abs(p.contrast - 1.0) > 0.005 || abs(p.saturation - 1.0) > 0.005 {
+                    let cc = CIFilter.colorControls()
+                    cc.inputImage = img
+                    cc.contrast = Float(p.contrast)
+                    cc.saturation = Float(p.saturation)
+                    if let out = cc.outputImage { img = out }
+                }
+
+                request.finish(with: img.cropped(to: extent), context: box.ciContext)
+            }
+            self.enhancementComposition = comp
+            if self.enhanceMode != .off {
+                playerItem.videoComposition = comp
+            }
+        } catch {
+            // Gracefully fall back to native unfiltered playback if track cannot be composited
+        }
     }
 
     public func seek(to seconds: Double) {

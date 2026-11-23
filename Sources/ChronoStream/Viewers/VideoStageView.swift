@@ -53,11 +53,18 @@ public struct VideoStageView: View {
     @State private var isDragging = false
     @State private var dragTime: Double = 0
     @State private var keyMonitor: Any?
+    @State private var scrollMonitor: Any?
+    @State private var isHoveringStage = false
+    @State private var videoZoom: CGFloat = 1.0
+    @State private var gestureBaseZoom: CGFloat = 1.0
+    @State private var videoPan: CGSize = .zero
+    @State private var panDragStart: CGSize = .zero
     @State private var osdText: String?
     @State private var osdSymbol: String?
     @State private var osdHideTask: Task<Void, Never>?
     @State private var showShortcutsHelp = false
     @State private var showDisplayPopover = false
+    @State private var showEnhancePopover = false
     private let displayManager = DisplayManager.shared
 
     private let speeds: [Float] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0]
@@ -75,8 +82,41 @@ public struct VideoStageView: View {
             Color.black.ignoresSafeArea()
 
             AVPlayerSurface(player: controller.player)
+                .scaleEffect(videoZoom)
+                .offset(videoPan)
+                .clipped()
+                .contentShape(Rectangle())
+                .gesture(
+                    MagnifyGesture()
+                        .onChanged { val in
+                            let next = min(6.0, max(1.0, gestureBaseZoom * val.magnification))
+                            videoZoom = next
+                            if next <= 1.01 { videoPan = .zero; panDragStart = .zero }
+                            flashOSD(String(format: "Zoom %.1f×", next), symbol: "plus.magnifyingglass")
+                        }
+                        .onEnded { _ in
+                            gestureBaseZoom = videoZoom
+                        }
+                )
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 4)
+                        .onChanged { val in
+                            guard videoZoom > 1.01 else { return }
+                            videoPan = CGSize(
+                                width: panDragStart.width + val.translation.width,
+                                height: panDragStart.height + val.translation.height
+                            )
+                        }
+                        .onEnded { _ in
+                            panDragStart = videoPan
+                        }
+                )
                 .onTapGesture(count: 2) {
-                    NSApp.keyWindow?.toggleFullScreen(nil)
+                    if videoZoom > 1.01 {
+                        resetVideoZoom()
+                    } else {
+                        NSApp.keyWindow?.toggleFullScreen(nil)
+                    }
                 }
                 .onTapGesture(count: 1) {
                     controller.togglePlayPause()
@@ -181,6 +221,37 @@ public struct VideoStageView: View {
                         .buttonStyle(.bordered)
                         .tint(.white.opacity(0.2))
                         .foregroundStyle(.white)
+
+                        // Live GPU Video Enhancement Button & Popover
+                        Button {
+                            showEnhancePopover.toggle()
+                        } label: {
+                            Label(
+                                controller.enhanceMode == .off ? "Enhance" : controller.enhanceMode.rawValue,
+                                systemImage: "wand.and.stars"
+                            )
+                            .font(.caption.weight(.medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(controller.enhanceMode == .off ? .white.opacity(0.2) : .teal)
+                        .foregroundStyle(.white)
+                        .help("Live GPU Video Enhancement (E) — Sharpen, Denoise & CCTV Clarity")
+                        .popover(isPresented: $showEnhancePopover, arrowEdge: .bottom) {
+                            videoEnhancePopover
+                        }
+
+                        if videoZoom > 1.01 {
+                            Button {
+                                resetVideoZoom()
+                            } label: {
+                                Label(String(format: "%.1f× · Reset", videoZoom), systemImage: "magnifyingglass")
+                                    .font(.caption.monospacedDigit().weight(.medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.teal)
+                            .foregroundStyle(.white)
+                            .help("Reset Video Zoom (R)")
+                        }
 
                         if displayManager.hasExternalDisplay {
                             Button {
@@ -330,8 +401,27 @@ public struct VideoStageView: View {
             }
         }
         .onHover { inside in
+            isHoveringStage = inside
             withAnimation(.easeInOut(duration: 0.2)) {
-                showControls = inside || !controller.isPlaying
+                showControls = inside || !controller.isPlaying || showEnhancePopover || showShortcutsHelp
+            }
+        }
+        .onChange(of: showEnhancePopover) { _, open in
+            if open {
+                showControls = true
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showControls = isHoveringStage || !controller.isPlaying || showShortcutsHelp
+                }
+            }
+        }
+        .onChange(of: showShortcutsHelp) { _, open in
+            if open {
+                showControls = true
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showControls = isHoveringStage || !controller.isPlaying || showEnhancePopover
+                }
             }
         }
         .onAppear {
@@ -339,6 +429,7 @@ public struct VideoStageView: View {
             installKeyMonitor()
         }
         .onChange(of: item.id) { _, _ in
+            resetVideoZoom(silent: true)
             controller.load(item)
         }
         .onDisappear {
@@ -349,7 +440,30 @@ public struct VideoStageView: View {
         }
     }
 
-    // MARK: - Keyboard Shortcuts & OSD
+    private func applyVideoZoom(_ next: CGFloat) {
+        let clamped = min(6.0, max(1.0, next))
+        videoZoom = clamped
+        gestureBaseZoom = clamped
+        if clamped <= 1.01 {
+            videoPan = .zero
+            panDragStart = .zero
+        }
+        flashOSD(String(format: "Zoom %.1f×", clamped), symbol: clamped > 1.01 ? "plus.magnifyingglass" : "1.magnifyingglass")
+    }
+
+    private func resetVideoZoom(silent: Bool = false) {
+        withAnimation(.easeOut(duration: 0.18)) {
+            videoZoom = 1.0
+            gestureBaseZoom = 1.0
+            videoPan = .zero
+            panDragStart = .zero
+        }
+        if !silent {
+            flashOSD("Zoom 1.0×", symbol: "1.magnifyingglass")
+        }
+    }
+
+    // MARK: - Keyboard Shortcuts, Scroll Zoom & OSD
 
     private func installKeyMonitor() {
         removeKeyMonitor()
@@ -366,12 +480,28 @@ public struct VideoStageView: View {
             }
             return handleKeyDown(event) ? nil : event
         }
+
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            guard isHoveringStage else { return event }
+            let dy = event.scrollingDeltaY
+            guard abs(dy) > 0.05 else { return event }
+            let step: CGFloat = event.hasPreciseScrollingDeltas ? dy * 0.008 : dy * 0.08
+            let next = min(6.0, max(1.0, videoZoom + step))
+            if abs(next - videoZoom) > 0.005 {
+                applyVideoZoom(next)
+            }
+            return nil
+        }
     }
 
     private func removeKeyMonitor() {
         if let monitor = keyMonitor {
             NSEvent.removeMonitor(monitor)
             keyMonitor = nil
+        }
+        if let sMonitor = scrollMonitor {
+            NSEvent.removeMonitor(sMonitor)
+            scrollMonitor = nil
         }
     }
 
@@ -406,7 +536,9 @@ public struct VideoStageView: View {
             flashOSD(nextVol == 0 ? "Muted" : "Volume \(Int((nextVol * 100).rounded()))%", symbol: nextVol == 0 ? "speaker.slash.fill" : "speaker.wave.1.fill")
             return true
         case 53: // Escape
-            if showShortcutsHelp {
+            if showEnhancePopover {
+                showEnhancePopover = false
+            } else if showShortcutsHelp {
                 showShortcutsHelp = false
             } else if let win = NSApp.keyWindow, win.styleMask.contains(.fullScreen) {
                 win.toggleFullScreen(nil)
@@ -464,6 +596,19 @@ public struct VideoStageView: View {
         case "f":
             NSApp.keyWindow?.toggleFullScreen(nil)
             return true
+        case "=", "+":
+            applyVideoZoom(videoZoom + 0.25)
+            return true
+        case "-":
+            applyVideoZoom(videoZoom - 0.25)
+            return true
+        case "r":
+            resetVideoZoom()
+            return true
+        case "e":
+            controller.cycleEnhanceMode()
+            flashOSD("Enhance: \(controller.enhanceMode.rawValue)", symbol: "wand.and.stars")
+            return true
         case "c":
             controller.promptLoadSubtitles()
             return true
@@ -519,6 +664,97 @@ public struct VideoStageView: View {
         }
     }
 
+    private var videoEnhancePopover: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Live GPU Enhancement", systemImage: "wand.and.stars")
+                    .font(.headline)
+                Spacer()
+                Text("Real-Time · Metal")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.teal)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.teal.opacity(0.12), in: Capsule())
+            }
+
+            // Preset Modes
+            VStack(spacing: 6) {
+                ForEach(VideoEnhanceMode.allCases) { mode in
+                    let active = controller.enhanceMode == mode
+                    Button {
+                        controller.setEnhanceMode(mode)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: active ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(active ? Color.teal : Color.secondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(mode.rawValue)
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Text(mode.subtitle)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(active ? Color.teal.opacity(0.12) : Color.primary.opacity(0.04))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if controller.enhanceMode != .off {
+                Divider()
+
+                VStack(spacing: 10) {
+                    enhanceSliderRow("Sharpness & Edges", value: Binding(
+                        get: { controller.enhanceParams.sharpness },
+                        set: { var p = controller.enhanceParams; p.sharpness = $0; controller.updateEnhanceParams(p) }
+                    ), range: 0...2.0)
+
+                    enhanceSliderRow("Denoise (Low-Light)", value: Binding(
+                        get: { controller.enhanceParams.denoise },
+                        set: { var p = controller.enhanceParams; p.denoise = $0; controller.updateEnhanceParams(p) }
+                    ), range: 0...0.08)
+
+                    enhanceSliderRow("Shadow Lift (Night CCTV)", value: Binding(
+                        get: { controller.enhanceParams.shadowLift },
+                        set: { var p = controller.enhanceParams; p.shadowLift = $0; controller.updateEnhanceParams(p) }
+                    ), range: 0...0.8)
+
+                    enhanceSliderRow("Clarity Contrast", value: Binding(
+                        get: { controller.enhanceParams.contrast },
+                        set: { var p = controller.enhanceParams; p.contrast = $0; controller.updateEnhanceParams(p) }
+                    ), range: 0.9...1.35)
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+
+    private func enhanceSliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(title)
+                    .font(.caption.weight(.medium))
+                Spacer()
+                Text(String(format: "%.2f", value.wrappedValue))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: value, in: range)
+                .tint(.teal)
+                .controlSize(.small)
+        }
+    }
+
     private var shortcutsCheatSheet: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Video Keyboard Shortcuts")
@@ -538,6 +774,9 @@ public struct VideoStageView: View {
                 shortcutRow("↑ / ↓", "Volume Up / Down")
                 shortcutRow("M", "Mute / Unmute")
                 shortcutRow("F", "Toggle Full Screen")
+                shortcutRow("Pinch / Scroll", "Zoom Live Video (1×–6×)")
+                shortcutRow("+ / - / R", "Zoom In / Out / Reset")
+                shortcutRow("E", "Cycle Live GPU Enhancement")
                 shortcutRow("Z", "Cycle Precision Zoom")
                 shortcutRow("C", "Load Subtitles")
                 shortcutRow("Esc", "Exit Full Screen / Back")

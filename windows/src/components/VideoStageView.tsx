@@ -36,6 +36,37 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [osd, setOsd] = useState<string | null>(null);
   const [hoverInfo, setHoverInfo] = useState<{ x: number; time: number } | null>(null);
+  const [videoZoom, setVideoZoom] = useState(1);
+  const [videoPan, setVideoPan] = useState({ x: 0, y: 0 });
+  const [enhanceMode, setEnhanceMode] = useState<"off" | "enhanced" | "cctv" | "ultra">("off");
+  const dragPanRef = useRef<{ active: boolean; startX: number; startY: number; baseX: number; baseY: number }>({
+    active: false, startX: 0, startY: 0, baseX: 0, baseY: 0
+  });
+
+  const cycleEnhance = () => {
+    const order: ("off" | "enhanced" | "cctv" | "ultra")[] = ["off", "enhanced", "cctv", "ultra"];
+    const next = order[(order.indexOf(enhanceMode) + 1) % order.length];
+    setEnhanceMode(next);
+    flashOSD(`Enhance: ${next === "off" ? "Off" : next === "enhanced" ? "Enhanced" : next === "cctv" ? "CCTV Clarity" : "Ultra Crisp"}`);
+  };
+
+  const enhanceFilter =
+    enhanceMode === "enhanced" ? "contrast(1.08) saturate(1.08) brightness(1.03)" :
+    enhanceMode === "cctv" ? "contrast(1.22) brightness(1.16) saturate(1.06)" :
+    enhanceMode === "ultra" ? "contrast(1.18) brightness(1.08) saturate(1.12)" : "none";
+
+  const applyVideoZoom = (next: number) => {
+    const clamped = Math.min(6, Math.max(1, next));
+    setVideoZoom(clamped);
+    if (clamped <= 1.01) setVideoPan({ x: 0, y: 0 });
+    flashOSD(`Zoom ${clamped.toFixed(1)}×`);
+  };
+
+  const resetVideoZoom = () => {
+    setVideoZoom(1);
+    setVideoPan({ x: 0, y: 0 });
+    flashOSD("Zoom 1.0×");
+  };
 
   const osdTimer = useRef<number | null>(null);
   const flashOSD = (text: string) => {
@@ -136,6 +167,17 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
         case "F":
           if (document.fullscreenElement) document.exitFullscreen(); else containerRef.current?.requestFullscreen();
           break;
+        case "=":
+        case "+":
+          applyVideoZoom(videoZoom + 0.25); break;
+        case "-":
+          applyVideoZoom(videoZoom - 0.25); break;
+        case "r":
+        case "R":
+          resetVideoZoom(); break;
+        case "e":
+        case "E":
+          cycleEnhance(); break;
         case "z":
         case "Z": {
           const nextZ = ZOOMS[(ZOOMS.indexOf(zoomWindow) + 1) % ZOOMS.length];
@@ -218,6 +260,18 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={cycleEnhance}
+            className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium cursor-pointer ${enhanceMode !== "off" ? "bg-teal-600" : "bg-white/15 hover:bg-white/25"}`}
+            title="Live GPU Enhancement (E)"
+          >
+            {enhanceMode === "off" ? "Enhance" : enhanceMode === "enhanced" ? "Enhanced" : enhanceMode === "cctv" ? "CCTV Clarity" : "Ultra Crisp"}
+          </button>
+          {videoZoom > 1.01 && (
+            <button onClick={resetVideoZoom} className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-2.5 py-1 text-xs font-mono font-medium cursor-pointer" title="Reset Zoom (R)">
+              {videoZoom.toFixed(1)}× · Reset
+            </button>
+          )}
           <button onClick={() => onShare(item)} className="inline-flex items-center gap-1 rounded-lg bg-white/15 px-2.5 py-1 text-xs font-medium hover:bg-white/25 cursor-pointer">
             <Share2 size={13} /> Share
           </button>
@@ -235,14 +289,45 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
         </div>
       </div>
 
-      {/* Main Video Surface */}
-      <div className="relative flex flex-1 items-center justify-center overflow-hidden" onClick={togglePlay}>
+      {/* Main Video Surface with Live Mouse Wheel Zoom & Drag-to-Pan */}
+      <div
+        className="relative flex flex-1 items-center justify-center overflow-hidden"
+        onWheel={(e) => {
+          e.preventDefault();
+          const delta = -e.deltaY * 0.0025;
+          applyVideoZoom(videoZoom + delta);
+        }}
+        onMouseDown={(e) => {
+          if (videoZoom <= 1.01) return;
+          dragPanRef.current = { active: true, startX: e.clientX, startY: e.clientY, baseX: videoPan.x, baseY: videoPan.y };
+        }}
+        onMouseMove={(e) => {
+          if (!dragPanRef.current.active) return;
+          setVideoPan({
+            x: dragPanRef.current.baseX + (e.clientX - dragPanRef.current.startX),
+            y: dragPanRef.current.baseY + (e.clientY - dragPanRef.current.startY)
+          });
+        }}
+        onMouseUp={() => { dragPanRef.current.active = false; }}
+        onMouseLeave={() => { dragPanRef.current.active = false; }}
+        onDoubleClick={() => {
+          if (videoZoom > 1.01) resetVideoZoom();
+          else if (document.fullscreenElement) document.exitFullscreen();
+          else containerRef.current?.requestFullscreen();
+        }}
+        onClick={() => { if (videoZoom <= 1.01) togglePlay(); }}
+      >
         {playbackUrl && (
           <video
             ref={videoRef}
             src={playbackUrl}
             autoPlay
-            className="h-full w-full object-contain"
+            style={{
+              transform: `translate(${videoPan.x}px, ${videoPan.y}px) scale(${videoZoom})`,
+              filter: enhanceFilter,
+              cursor: videoZoom > 1.01 ? "grab" : "pointer"
+            }}
+            className="h-full w-full object-contain transition-transform duration-75"
             onLoadedMetadata={(e) => {
               const v = e.currentTarget;
               setDuration(v.duration || 0);
