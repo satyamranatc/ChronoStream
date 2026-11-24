@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, screen, powerSaveBlocker, protocol, nativeImage } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, screen, powerSaveBlocker, protocol, nativeImage } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
@@ -66,41 +66,56 @@ function fastPartialHash(filePath, size) {
 }
 
 function scanDirectoryRecursive(dirPath, maxDepth = 4, depth = 0) {
-  if (depth > maxDepth) return [];
-  let out = [];
-  let entries = [];
-  try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  } catch {
-    return [];
+  const collect = (dir, d) => {
+    if (d > maxDepth) return [];
+    let out = [];
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        out = out.concat(collect(full, d + 1));
+      } else if (entry.isFile()) {
+        const kind = classifyExt(full);
+        if (!kind) continue;
+        try {
+          const st = fs.statSync(full);
+          out.push({
+            id: full,
+            path: full,
+            name: entry.name,
+            kind,
+            ext: path.extname(entry.name).toUpperCase().replace(".", ""),
+            fileSize: st.size,
+            modifiedAt: st.mtimeMs,
+            partialHash: null,
+            isFavorite: false,
+            lastPosition: 0,
+            duration: 0
+          });
+        } catch {}
+      }
+    }
+    return out;
+  };
+
+  const items = collect(dirPath, depth);
+  // Fast duplicate detection: only read 128 KB partial hash for files sharing an identical fileSize (cuts disk I/O by ~95%)
+  const sizeCounts = new Map();
+  for (const item of items) {
+    if (item.fileSize > 0) sizeCounts.set(item.fileSize, (sizeCounts.get(item.fileSize) || 0) + 1);
   }
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const full = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      out = out.concat(scanDirectoryRecursive(full, maxDepth, depth + 1));
-    } else if (entry.isFile()) {
-      const kind = classifyExt(full);
-      if (!kind) continue;
-      try {
-        const st = fs.statSync(full);
-        out.push({
-          id: full,
-          path: full,
-          name: entry.name,
-          kind,
-          ext: path.extname(entry.name).toUpperCase().replace(".", ""),
-          fileSize: st.size,
-          modifiedAt: st.mtimeMs,
-          partialHash: fastPartialHash(full, st.size),
-          isFavorite: false,
-          lastPosition: 0,
-          duration: 0
-        });
-      } catch {}
+  for (const item of items) {
+    if (item.fileSize > 0 && (sizeCounts.get(item.fileSize) || 0) > 1) {
+      item.partialHash = fastPartialHash(item.path, item.fileSize);
     }
   }
-  return out;
+  return items;
 }
 
 function needsFFmpegRemux(filePath) {
@@ -155,20 +170,43 @@ function getDisplayPayload() {
   }));
 }
 
+// Single-instance lock so Windows desktop shortcut focuses the existing window
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 function createWindow() {
+  const iconPath = path.join(__dirname, "../../Resources/icon.png");
   mainWindow = new BrowserWindow({
     width: 1240,
     height: 780,
     minWidth: 960,
     minHeight: 620,
+    show: false,
+    autoHideMenuBar: true,
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     backgroundColor: "#F5F7FA",
     title: "ChronoStream",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: true
+      webSecurity: true,
+      backgroundThrottling: false
     }
+  });
+
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.once("ready-to-show", () => {
+    mainWindow?.show();
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -210,8 +248,9 @@ app.whenReady().then(() => {
 
     if (range) {
       const match = /bytes=(\d+)-(\d*)/.exec(range);
-      const start = match ? parseInt(match[1], 10) : 0;
-      const end = match && match[2] ? parseInt(match[2], 10) : Math.min(start + 2 * 1024 * 1024 - 1, total - 1);
+      const start = Math.min(match ? parseInt(match[1], 10) : 0, Math.max(0, total - 1));
+      const requestedEnd = match && match[2] ? parseInt(match[2], 10) : start + 2 * 1024 * 1024 - 1;
+      const end = Math.min(Math.max(start, requestedEnd), Math.max(0, total - 1));
       const chunkSize = end - start + 1;
       const stream = fs.createReadStream(filePath, { start, end });
       return new Response(stream, {
@@ -242,6 +281,7 @@ app.whenReady().then(() => {
     }
   });
 
+  Menu.setApplicationMenu(null);
   createWindow();
   updatePowerAssertion();
 

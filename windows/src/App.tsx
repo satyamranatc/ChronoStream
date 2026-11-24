@@ -949,6 +949,7 @@ export default function App() {
           onTheme={setTheme}
           onFontScale={setFontScale}
           onClickSound={setClickSound}
+          onReplayWelcome={() => setShowWelcome(true)}
           onClose={() => setShowSettings(false)}
         />
       )}

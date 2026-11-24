@@ -8,10 +8,11 @@ interface Props {
   onTheme: (t: "light" | "dark") => void;
   onFontScale: (f: "compact" | "comfortable" | "large") => void;
   onClickSound: (v: boolean) => void;
+  onReplayWelcome: () => void;
   onClose: () => void;
 }
 
-export default function SettingsModal({ theme, fontScale, clickSound, onTheme, onFontScale, onClickSound, onClose }: Props) {
+export default function SettingsModal({ theme, fontScale, clickSound, onTheme, onFontScale, onClickSound, onReplayWelcome, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs" onClick={onClose}>
       <div className="cs-card w-[440px] rounded-2xl p-5 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -42,8 +43,19 @@ export default function SettingsModal({ theme, fontScale, clickSound, onTheme, o
 
           <label className="flex items-center justify-between cursor-pointer pt-1">
             <span>Subtle UI Click Sound</span>
-            <input type="checkbox" checked={clickSound} onChange={(e) => onClickSound(e.target.checked)} className="h-4 w-4 accent-teal-600" />
+            <input type="checkbox" checked={clickSound} onChange={(e) => onClickSound(e.target.checked)} className="h-4 w-4 accent-blue-600" />
           </label>
+
+          <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: "var(--cs-border)" }}>
+            <span>Welcome Walkthrough</span>
+            <button
+              onClick={() => { onClose(); onReplayWelcome(); }}
+              className="rounded-lg border px-3 py-1.5 text-xs font-medium cursor-pointer"
+              style={{ borderColor: "var(--cs-border)", background: "var(--cs-surface-subtle)" }}
+            >
+              Replay Welcome Tour
+            </button>
+          </div>
         </div>
       </div>
     </div>
