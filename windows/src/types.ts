@@ -126,6 +126,7 @@ declare global {
   interface Window {
     chronoAPI?: {
       mediaUrl: (p: string) => string;
+      getPathForFile: (file: File) => string;
       pickFolders: () => Promise<string[]>;
       pickFiles: () => Promise<string[]>;
       scanFolder: (p: string) => Promise<MediaItem[]>;

@@ -424,6 +424,7 @@ export default function VideoStageView({ item, hasExternalDisplay, onClose, onSh
           <video
             ref={videoRef}
             src={playbackUrl}
+            crossOrigin="anonymous"
             autoPlay
             style={{
               transform: `translate(${videoPan.x}px, ${videoPan.y}px) scale(${videoZoom}) rotate(${videoRotation}deg)`,

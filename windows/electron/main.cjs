@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, ipcMain, dialog, shell, screen, powerSaveBlock
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const { Readable } = require("stream");
 const { spawn } = require("child_process");
 const { Document, Packer, Paragraph, TextRun } = require("docx");
 const mammoth = require("mammoth");
@@ -184,7 +185,7 @@ if (!gotLock) {
 }
 
 function createWindow() {
-  const iconPath = path.join(__dirname, "../../Resources/icon.png");
+  const iconPath = path.join(__dirname, "icon.png");
   mainWindow = new BrowserWindow({
     width: 1240,
     height: 780,
@@ -246,31 +247,49 @@ app.whenReady().then(() => {
     const contentType = mimeMap[ext] || "application/octet-stream";
     const range = request.headers.get("range");
 
+    if (total === 0) {
+      return new Response(new Uint8Array(0), {
+        status: 200,
+        headers: {
+          "Content-Length": "0",
+          "Content-Type": contentType,
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-store"
+        }
+      });
+    }
+
     if (range) {
       const match = /bytes=(\d+)-(\d*)/.exec(range);
       const start = Math.min(match ? parseInt(match[1], 10) : 0, Math.max(0, total - 1));
       const requestedEnd = match && match[2] ? parseInt(match[2], 10) : start + 2 * 1024 * 1024 - 1;
       const end = Math.min(Math.max(start, requestedEnd), Math.max(0, total - 1));
       const chunkSize = end - start + 1;
-      const stream = fs.createReadStream(filePath, { start, end });
-      return new Response(stream, {
+      const nodeStream = fs.createReadStream(filePath, { start, end });
+      nodeStream.on("error", () => {});
+      return new Response(Readable.toWeb(nodeStream), {
         status: 206,
         headers: {
           "Content-Range": `bytes ${start}-${end}/${total}`,
           "Accept-Ranges": "bytes",
           "Content-Length": String(chunkSize),
-          "Content-Type": contentType
+          "Content-Type": contentType,
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-store"
         }
       });
     }
 
-    const stream = fs.createReadStream(filePath);
-    return new Response(stream, {
+    const nodeStream = fs.createReadStream(filePath);
+    nodeStream.on("error", () => {});
+    return new Response(Readable.toWeb(nodeStream), {
       status: 200,
       headers: {
         "Content-Length": String(total),
         "Accept-Ranges": "bytes",
-        "Content-Type": contentType
+        "Content-Type": contentType,
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store"
       }
     });
   });

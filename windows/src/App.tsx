@@ -433,8 +433,9 @@ export default function App() {
       onDrop={(e) => {
         e.preventDefault();
         const f = e.dataTransfer?.files?.[0] as (File & { path?: string }) | undefined;
-        if (!f?.path) return;
-        const p = f.path;
+        if (!f) return;
+        const p = window.chronoAPI?.getPathForFile(f) || f.path || "";
+        if (!p) return;
         const ext = p.split(".").pop()?.toLowerCase() || "";
         const kind = ["mp4", "mov", "m4v", "mkv", "avi", "webm"].includes(ext) ? "video"
           : ["mp3", "wav", "m4a", "flac", "ogg"].includes(ext) ? "audio"

@@ -50,7 +50,7 @@ export default function AudioStageView({ item, queue, onSelectTrack, onShare, on
             const h = Math.max(3, amp * c.height);
             const x = i * (w + gap);
             const y = (c.height - h) / 2;
-            ctx.fillStyle = isPlaying ? `rgba(0, 128, 128, ${0.55 + 0.45 * bell})` : "rgba(148,163,184,0.3)";
+            ctx.fillStyle = isPlaying ? `rgba(0, 122, 255, ${0.55 + 0.45 * bell})` : "rgba(148,163,184,0.3)";
             ctx.beginPath();
             ctx.roundRect(x, y, w, h, w / 2);
             ctx.fill();

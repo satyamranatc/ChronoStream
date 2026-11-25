@@ -1,7 +1,10 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("chronoAPI", {
   mediaUrl: (filePath) => `chronostream-media://local?path=${encodeURIComponent(filePath)}`,
+  getPathForFile: (file) => {
+    try { return webUtils.getPathForFile(file); } catch { return ""; }
+  },
   pickFolders: () => ipcRenderer.invoke("fs:pick-folders"),
   pickFiles: () => ipcRenderer.invoke("fs:pick-files"),
   scanFolder: (folderPath) => ipcRenderer.invoke("fs:scan-folder", folderPath),

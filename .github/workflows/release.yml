@@ -53,11 +53,16 @@ jobs:
         working-directory: windows
         run: npm install
 
-      - name: Typecheck & Build Windows NSIS Installer (.exe)
+      - name: Typecheck & Build Windows NSIS Installer (.exe + .zip)
         working-directory: windows
+        shell: pwsh
         run: |
           npm run typecheck
           npm run build:win
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          $exe = "dist-installer/ChronoStream-$ver-Setup-x64.exe"
+          $zip = "dist-installer/ChronoStream-$ver-Windows-x64.zip"
+          Compress-Archive -Path $exe -DestinationPath $zip -Force
 
       - name: Upload Windows Installer to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -65,4 +70,5 @@ jobs:
           name: "ChronoStream ${{ github.ref_name }}"
           files: |
             windows/dist-installer/*.exe
+            windows/dist-installer/*.zip
             windows/dist-installer/*.blockmap

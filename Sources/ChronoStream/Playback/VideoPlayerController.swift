@@ -592,65 +592,69 @@ public final class VideoPlayerController {
     private func attachEnhancementComposition(to playerItem: AVPlayerItem, asset: AVURLAsset) async {
         let box = enhancementBox
         do {
-            let comp = try await AVVideoComposition.videoComposition(with: asset) { request in
-                let p = box.snapshot()
-                let extent = request.sourceImage.extent
-                guard p.enabled else {
-                    request.finish(with: request.sourceImage, context: box.ciContext)
-                    return
-                }
-
-                var img = request.sourceImage.clampedToExtent()
-
-                // 1. GPU Noise Reduction (cleans H.264 / low-light CCTV grain)
-                if p.denoise > 0.002 {
-                    let nr = CIFilter.noiseReduction()
-                    nr.inputImage = img
-                    nr.noiseLevel = Float(p.denoise)
-                    nr.sharpness = Float(min(0.8, 0.35 + p.sharpness * 0.25))
-                    if let out = nr.outputImage { img = out }
-                }
-
-                // 2. Shadow Lift & Highlight Recovery (reveals faces/objects in dark CCTV scenes)
-                if p.shadowLift > 0.01 {
-                    let hs = CIFilter.highlightShadowAdjust()
-                    hs.inputImage = img
-                    hs.shadowAmount = Float(p.shadowLift)
-                    hs.highlightAmount = 0.92
-                    if let out = hs.outputImage { img = out }
-                }
-
-                // 3. Smart Unsharp Mask + Luminance Sharpening (text, faces, number plates)
-                if p.sharpness > 0.05 {
-                    let unsharp = CIFilter.unsharpMask()
-                    unsharp.inputImage = img
-                    unsharp.radius = Float(1.6 + min(1.0, p.sharpness * 0.5))
-                    unsharp.intensity = Float(min(1.6, p.sharpness * 0.9))
-                    if let out = unsharp.outputImage { img = out }
-
-                    let lum = CIFilter.sharpenLuminance()
-                    lum.inputImage = img
-                    lum.sharpness = Float(min(0.85, p.sharpness * 0.38))
-                    if let out = lum.outputImage { img = out }
-                }
-
-                // 4. Local Clarity Contrast & Natural Saturation
-                if abs(p.contrast - 1.0) > 0.005 || abs(p.saturation - 1.0) > 0.005 {
-                    let cc = CIFilter.colorControls()
-                    cc.inputImage = img
-                    cc.contrast = Float(p.contrast)
-                    cc.saturation = Float(p.saturation)
-                    if let out = cc.outputImage { img = out }
-                }
-
-                request.finish(with: img.cropped(to: extent), context: box.ciContext)
-            }
+            let comp = try await Self.makeEnhancementComposition(asset: asset, box: box)
             self.enhancementComposition = comp
             if self.enhanceMode != .off {
                 playerItem.videoComposition = comp
             }
         } catch {
             // Gracefully fall back to native unfiltered playback if track cannot be composited
+        }
+    }
+
+    private nonisolated static func makeEnhancementComposition(asset: AVURLAsset, box: LiveEnhancementBox) async throws -> AVVideoComposition {
+        try await AVVideoComposition.videoComposition(with: asset) { request in
+            let p = box.snapshot()
+            let extent = request.sourceImage.extent
+            guard p.enabled else {
+                request.finish(with: request.sourceImage, context: box.ciContext)
+                return
+            }
+
+            var img = request.sourceImage.clampedToExtent()
+
+            // 1. GPU Noise Reduction (cleans H.264 / low-light CCTV grain)
+            if p.denoise > 0.002 {
+                let nr = CIFilter.noiseReduction()
+                nr.inputImage = img
+                nr.noiseLevel = Float(p.denoise)
+                nr.sharpness = Float(min(0.8, 0.35 + p.sharpness * 0.25))
+                if let out = nr.outputImage { img = out }
+            }
+
+            // 2. Shadow Lift & Highlight Recovery (reveals faces/objects in dark CCTV scenes)
+            if p.shadowLift > 0.01 {
+                let hs = CIFilter.highlightShadowAdjust()
+                hs.inputImage = img
+                hs.shadowAmount = Float(p.shadowLift)
+                hs.highlightAmount = 0.92
+                if let out = hs.outputImage { img = out }
+            }
+
+            // 3. Smart Unsharp Mask + Luminance Sharpening (text, faces, number plates)
+            if p.sharpness > 0.05 {
+                let unsharp = CIFilter.unsharpMask()
+                unsharp.inputImage = img
+                unsharp.radius = Float(1.6 + min(1.0, p.sharpness * 0.5))
+                unsharp.intensity = Float(min(1.6, p.sharpness * 0.9))
+                if let out = unsharp.outputImage { img = out }
+
+                let lum = CIFilter.sharpenLuminance()
+                lum.inputImage = img
+                lum.sharpness = Float(min(0.85, p.sharpness * 0.38))
+                if let out = lum.outputImage { img = out }
+            }
+
+            // 4. Local Clarity Contrast & Natural Saturation
+            if abs(p.contrast - 1.0) > 0.005 || abs(p.saturation - 1.0) > 0.005 {
+                let cc = CIFilter.colorControls()
+                cc.inputImage = img
+                cc.contrast = Float(p.contrast)
+                cc.saturation = Float(p.saturation)
+                if let out = cc.outputImage { img = out }
+            }
+
+            request.finish(with: img.cropped(to: extent), context: box.ciContext)
         }
     }
 
